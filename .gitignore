@@ -1,0 +1,23 @@
+# Data
+data/raw/
+data/processed/
+
+# Results
+results/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
