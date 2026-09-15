@@ -1,0 +1,67 @@
+# Maps every class name in every dataset onto the 5-part differential.
+#
+# Entries are "<dataset>:<class name exactly as it appears in the data>".
+# Where each dataset's class names come from:
+#   pbc     top-level folder name in data/raw/PBC_dataset_normal_DIB/
+#   wbcatt  `label` column of data/raw/pbc_attr_v1_{train,val,test}.csv
+#   lisc    filename prefix before the first "_" in data/raw/LISC/{Train,Test}/
+#   raabin  TODO - not downloaded yet; any Raabin class is unmapped until added here
+#
+# Matching is exact and case-sensitive. A class name found in the data that is not
+# listed exactly once, under one of the five classes or under `excluded`, is a hard error.
+
+neutrophil:
+  # PBC's folder mixes band (BNE_*, 1,633), segmented (SNE_*, 1,646) and unsubtyped
+  # (NEUTROPHIL_*, 50) neutrophils. DECIDED 2026-09-15: bands stay in this class for
+  # training and all primary metrics, matching WBCAtt, which labels all three Neutrophil.
+  # Why not drop bands: PBC's BNE/SNE filename split disagrees with WBCAtt's
+  # nucleus_shape on 662 SNE images, so it is too noisy to filter on, and dropping it
+  # would halve the class and skew the nucleus_shape attribute.
+  # Raabin describes its neutrophils as mature; whether bands matter is measured with
+  # the pbc_test_no_band_neutrophils secondary subset below, never with target data.
+  - pbc:neutrophil
+  - wbcatt:Neutrophil
+  - lisc:neut
+
+lymphocyte:
+  - pbc:lymphocyte
+  - wbcatt:Lymphocyte
+  - lisc:lymp
+
+monocyte:
+  - pbc:monocyte
+  - wbcatt:Monocyte
+  - lisc:mono
+
+eosinophil:
+  - pbc:eosinophil
+  - wbcatt:Eosinophil
+  - lisc:eosi
+
+basophil:
+  - pbc:basophil
+  - wbcatt:Basophil
+  - lisc:Baso
+
+excluded:
+  # class_name: reason
+  pbc:ig: immature granulocytes (promyelocytes PMY_, myelocytes MY_, metamyelocytes MMY_, IG_); not part of the 5-part differential
+  pbc:erythroblast: nucleated red cell precursor, not a white blood cell
+  pbc:platelet: not a white blood cell
+
+# Individual files and folders left out, with reasons. These are not classes.
+excluded_files:
+  pbc:neutrophil/.DS_169665.jpg: macOS .DS_Store metadata (6,148 bytes) with a .jpg name; not an image and not in WBCAtt
+  lisc:Train_Aug/: augmented copies of LISC/Train added by whoever repackaged LISC; evaluation uses Train + Test only
+
+# Secondary evaluation subsets, fixed before any target-domain evaluation. Each is
+# reported alongside the primary metrics and never replaces them, and none is used for
+# training, model selection or tuning.
+secondary_subsets:
+  pbc_test_no_band_neutrophils:
+    split: pbc_test
+    # Neutrophils are segmented-only: drop BNE_* (band) and NEUTROPHIL_* (unsubtyped,
+    # could be band). All other classes unchanged. Leaves 2,606 of 3,099 test images
+    # (518 neutrophils). Answers: does including bands change source-domain results?
+    drop_filename_prefixes:
+      pbc:neutrophil: [BNE_, NEUTROPHIL_]
