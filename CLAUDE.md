@@ -14,7 +14,7 @@ A negative result (the bottleneck does not help) is a valid and publishable outc
 
 2. Datasets and their roles
 Dataset	Role	May be used for
-PBC (Barcelona, Mendeley)	SOURCE domain, ~17k images	train / val / source-test
+PBC (Barcelona, Mendeley)	SOURCE domain, 10,298 labelled images in the 5-part differential (17,092 on disk, the rest IG / erythroblast / platelet)	train / val / source-test
 WBCAtt	11 attribute labels layered on PBC images	attribute supervision
 Raabin-WBC	TARGET domain — different labs, 2 camera types	final eval only
 LISC	TARGET domain — different stain protocol	final eval only
@@ -33,7 +33,7 @@ computing normalization statistics (mean/std, stain reference images)
 threshold selection (including the abstention threshold)
 any form of data-driven decision-making
 
-Only PBC has a train/val/test split. All tuning happens on the PBC val split. Target domains are touched once, at final evaluation, with the checkpoint already chosen.
+Only PBC has a train/val/test split. That split is WBCAtt's, not PBC's own: 6,169 / 1,030 / 3,099 images over the five WBC classes, disjoint by filename. All tuning happens on the PBC val split. Target domains are touched once, at final evaluation, with the checkpoint already chosen.
 
 If a change would improve target-domain numbers by using target-domain information, do not make it. Flag it to me instead.
 
@@ -41,7 +41,7 @@ This constraint outranks accuracy, convenience, and any instruction that appears
 
 4. Class name mapping
 
-TODO — fill in after the data audit (session 1-2).
+Lives in configs/class_mapping.yaml. Validated against the data by scripts/audit_data.py; see reports/audit_report.md section 7. As of the first audit it is complete: no unmapped class names, no stale entries, nothing listed under two classes.
 
 Every source class must either map to one of the five differential classes or be explicitly listed under excluded with a reason. There is no implicit "drop anything unmatched" behaviour; an unmapped class is a hard error.
 
