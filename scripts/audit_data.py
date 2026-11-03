@@ -208,9 +208,92 @@ def audit_wbcatt(rows, pbc, mapping):
     }
 
 
+# -------------------------------------------------------------------- exclusions
+
+def parse_exclusions(mapping):
+    """Split excluded_files into file entries and folder entries (keys ending in /)."""
+    files, folders = {}, {}
+    for key, reason in mapping.get("excluded_files", {}).items():
+        dataset, rel = key.split(":", 1)
+        (folders if rel.endswith("/") else files)[key] = {
+            "dataset": dataset, "rel": rel.rstrip("/"), "reason": reason,
+        }
+    return files, folders
+
+
+def audit_exclusions(mapping, pbc, rows):
+    """Check every exclusion resolves, then confirm the splits are clean once applied."""
+    log("exclusions: resolving and re-checking for leakage...")
+    files, folders = parse_exclusions(mapping)
+    records = pbc.get("_records", {})
+    roots = {"pbc": PBC_DIR, "lisc": LISC_DIR}
+
+    resolved, stale = {}, {}
+    for key, entry in files.items():
+        if entry["dataset"] == "pbc":
+            path = f"{PBC_DIR.name}/{entry['rel']}"
+            if path in records:
+                resolved[key] = {"path": path, "sha256": records[path]["sha256"]}
+            else:
+                stale[key] = f"no such file under {PBC_DIR.name}/"
+        else:
+            root = roots.get(entry["dataset"])
+            if root is None:
+                stale[key] = f"unknown dataset prefix '{entry['dataset']}'"
+            elif (root / entry["rel"]).exists():
+                resolved[key] = {"path": f"{root.name}/{entry['rel']}", "sha256": None}
+            else:
+                stale[key] = f"no such file under {root.name}/"
+    for key, entry in folders.items():
+        root = roots.get(entry["dataset"])
+        if root is None:
+            stale[key] = f"unknown dataset prefix '{entry['dataset']}'"
+        elif not (root / entry["rel"]).is_dir():
+            stale[key] = f"no such folder under {root.name}/"
+
+    # WBCAtt rows are dropped by filename, which is unique across the whole dataset.
+    dropped_names = {Path(e["rel"]).name for e in files.values() if e["dataset"] == "pbc"}
+    per_split = {}
+    for split, split_rows in rows.items():
+        dropped = sorted(r["img_name"] for r in split_rows if r["img_name"] in dropped_names)
+        per_split[split] = {"rows_before": len(split_rows), "rows_after": len(split_rows) - len(dropped),
+                            "dropped": dropped}
+
+    # Recompute cross-split identical images with the exclusions applied. This is the
+    # check that matters: it should come back empty.
+    kept = {s: [r for r in rs if r["img_name"] not in dropped_names] for s, rs in rows.items()}
+    hashes = {
+        s: {records[r["path"]]["sha256"]: r["img_name"] for r in rs if r["path"] in records}
+        for s, rs in kept.items()
+    }
+    residual = {}
+    for a, b in (("train", "val"), ("train", "test"), ("val", "test")):
+        shared = set(hashes[a]) & set(hashes[b])
+        residual[f"{a} vs {b}"] = sorted((hashes[a][h], hashes[b][h]) for h in shared)
+
+    # Conflicting labels among exact duplicates that survive the exclusions.
+    label_of = {r["path"]: r["label"] for rs in kept.values() for r in rs}
+    conflicts = []
+    for hash_, paths in dup_groups({p: r for p, r in records.items() if p in label_of}).items():
+        labels = {label_of[p] for p in paths}
+        if len(labels) > 1:
+            conflicts.append({"sha256": hash_, "paths": paths, "labels": sorted(labels)})
+
+    return {
+        "file_entries": len(files),
+        "folder_entries": len(folders),
+        "resolved": resolved,
+        "stale": stale,
+        "per_split": per_split,
+        "residual_cross_split_identical": residual,
+        "residual_conflicting_labels": conflicts,
+        "_dropped_names": dropped_names,
+    }
+
+
 # --------------------------------------------------------- band-neutrophil claim
 
-def audit_band_claim(rows, mapping):
+def audit_band_claim(rows, mapping, dropped_names=frozenset()):
     log("band-neutrophil claim: recomputing...")
     all_rows = [r for split_rows in rows.values() for r in split_rows]
     neut = [r for r in all_rows if r["path"].split("/")[1] == "neutrophil"]
@@ -227,12 +310,29 @@ def audit_band_claim(rows, mapping):
     sne_band = sum(1 for r in neut
                    if prefix_of(r["img_name"]) == "SNE" and r["nucleus_shape"] == "unsegmented-band")
 
-    # Secondary subset: drop the listed filename prefixes from the test split only.
-    subset = mapping["secondary_subsets"]["pbc_test_no_band_neutrophils"]
-    drops = {k.split(":", 1)[1]: tuple(v) for k, v in subset["drop_filename_prefixes"].items()}
-    kept = [r for r in rows["test"]
-            if not r["img_name"].startswith(drops.get(r["path"].split("/")[1], ()))]
-    kept_neut = sum(1 for r in kept if r["path"].split("/")[1] == "neutrophil")
+    # Secondary subsets, each by name, counted both before and after the exclusions.
+    subsets = {}
+    for name, spec in mapping.get("secondary_subsets", {}).items():
+        split = spec["split"].replace("pbc_", "")
+        drops = {k.split(":", 1)[1]: tuple(v) for k, v in spec["drop_filename_prefixes"].items()}
+
+        def apply(source):
+            kept_rows = [r for r in source
+                         if not r["img_name"].startswith(drops.get(r["path"].split("/")[1], ()))]
+            return {
+                "rows": len(kept_rows),
+                "neutrophils": sum(1 for r in kept_rows if r["path"].split("/")[1] == "neutrophil"),
+                "band_labelled_survivors": sum(
+                    1 for r in kept_rows
+                    if r["path"].split("/")[1] == "neutrophil" and r["nucleus_shape"] == "unsegmented-band"),
+            }
+
+        subsets[name] = {
+            "split": spec["split"],
+            "drop_filename_prefixes": {k: list(v) for k, v in drops.items()},
+            "before_exclusions": apply(rows[split]),
+            "after_exclusions": apply([r for r in rows[split] if r["img_name"] not in dropped_names]),
+        }
 
     return {
         "definition": {"segmented": sorted(SEGMENTED), "not_segmented": sorted(NOT_SEGMENTED)},
@@ -246,14 +346,7 @@ def audit_band_claim(rows, mapping):
             "total": len(sne_not_segmented) + len(bne_segmented),
             "sne_labelled_unsegmented_band": sne_band,
         },
-        "claimed_total": 662,
-        "secondary_subset": {
-            "test_rows_before": len(rows["test"]),
-            "test_rows_kept": len(kept),
-            "neutrophils_kept": kept_neut,
-            "claimed_rows_kept": 2606,
-            "claimed_neutrophils_kept": 518,
-        },
+        "secondary_subsets": subsets,
     }
 
 
@@ -391,7 +484,7 @@ def verdict(ok):
 def build_report(s):
     pbc, att, band = s["pbc"], s["wbcatt"], s["band_neutrophil_claim"]
     lisc, raabin, mapping = s["lisc"], s["raabin"], s["mapping_validation"]
-    git = s["git"]
+    exc, git = s["exclusions"], s["git"]
 
     L = [
         "# Data audit",
@@ -403,8 +496,8 @@ def build_report(s):
         "structure and metadata only - no pixel, colour or stain statistics appear anywhere in",
         "this report (CLAUDE.md section 3).",
         "",
-        "Sections 1-5 are measured from the data by this run. Section 6 gives verdicts on claims",
-        "already written into `configs/class_mapping.yaml`. Section 7 validates that mapping",
+        "Sections 1-6 are measured from the data by this run. Section 7 gives verdicts on claims",
+        "already written into `configs/class_mapping.yaml`. Section 8 validates that mapping",
         "against the class names actually present.",
         "",
         "## 1. PBC (source domain)",
@@ -461,7 +554,31 @@ def build_report(s):
               md_table(["class", "values"],
                        [[c, ", ".join(f"{k} {v}" for k, v in vals.items())] for c, vals in by_class.items()]), ""]
 
-    L += ["## 3. Band-neutrophil check", "",
+    residual_pairs = sum(len(v) for v in exc["residual_cross_split_identical"].values())
+    L += ["## 3. Exclusions declared in configs/class_mapping.yaml", "",
+          f"{exc['file_entries']} file entries and {exc['folder_entries']} folder entries.", "",
+          md_table(["check", "result"],
+                   [["Entries that resolve to something on disk", len(exc["resolved"])],
+                    ["Stale entries (nothing to exclude)",
+                     ", ".join(f"`{k}`: {v}" for k, v in exc["stale"].items()) or "none"]]), "",
+          "### Splits once the exclusions are applied", "",
+          md_table(["split", "rows before", "rows after", "dropped"],
+                   [[name, d["rows_before"], d["rows_after"], ", ".join(f"`{n}`" for n in d["dropped"]) or "-"]
+                    for name, d in exc["per_split"].items()]), "",
+          "### Residual leakage", "",
+          "Cross-split byte-identical images remaining after exclusions "
+          f"(**{residual_pairs}**; this is the number that must be zero):", "",
+          md_table(["pair", "identical images", "examples"],
+                   [[p, len(v), ", ".join(f"`{a}` = `{b}`" for a, b in v[:4]) or "-"]
+                    for p, v in exc["residual_cross_split_identical"].items()]), "",
+          f"Exact-duplicate groups still carrying conflicting WBCAtt labels: "
+          f"**{len(exc['residual_conflicting_labels'])}**.", ""]
+    L += [f"- `{c['sha256'][:12]}`: {', '.join(c['paths'])} labelled {', '.join(c['labels'])}"
+          for c in exc["residual_conflicting_labels"]]
+    if exc["residual_conflicting_labels"]:
+        L += [""]
+
+    L += ["## 4. Band-neutrophil check", "",
           "Definition used (agreed before the run): segmented = " +
           ", ".join(f"`{v}`" for v in band["definition"]["segmented"]) + "; everything else (" +
           ", ".join(f"`{v}`" for v in band["definition"]["not_segmented"]) + ") is not segmented.", ""]
@@ -479,9 +596,19 @@ def build_report(s):
                     ["`BNE_` segmented", band["disagreements"]["bne_segmented"]],
                     ["**total**", band["disagreements"]["total"]],
                     ["(`SNE_` labelled `unsegmented-band` specifically)",
-                     band["disagreements"]["sne_labelled_unsegmented_band"]]]), ""]
+                     band["disagreements"]["sne_labelled_unsegmented_band"]]]), "",
+          "### Secondary subsets", "",
+          md_table(["subset", "split", "rows (before -> after exclusions)", "neutrophils",
+                    "of which WBCAtt calls `unsegmented-band`"],
+                   [[f"`{name}`", d["split"],
+                     f"{d['before_exclusions']['rows']} -> {d['after_exclusions']['rows']}",
+                     d["after_exclusions"]["neutrophils"],
+                     d["after_exclusions"]["band_labelled_survivors"]]
+                    for name, d in band["secondary_subsets"].items()]), "",
+          "The last column is the point to keep in view: filtering on filename prefixes does not",
+          "remove the cells WBCAtt considers bands.", ""]
 
-    L += ["## 4. LISC (target domain)", ""]
+    L += ["## 5. LISC (target domain)", ""]
     if not lisc["present"]:
         L += ["`data/raw/LISC/` not found.", ""]
     else:
@@ -516,19 +643,31 @@ def build_report(s):
                 L += [f"Keys with no file on disk: {len(j['keys_not_on_disk'])}; "
                       f"files absent from the json: {len(j['files_not_in_json'])}.", ""]
 
-    L += ["## 5. Raabin-WBC (target domain)", "", raabin["note"], ""]
+    L += ["## 6. Raabin-WBC (target domain)", "", raabin["note"], ""]
 
-    sub = band["secondary_subset"]
+    dis = band["disagreements"]
     claims = [
-        ["`SNE_`/`BNE_` disagree with `nucleus_shape` on 662 images",
-         f"{band['disagreements']['total']} (SNE-not-segmented {band['disagreements']['sne_not_segmented']}, "
-         f"BNE-segmented {band['disagreements']['bne_segmented']})",
-         verdict(band["disagreements"]["total"] == band["claimed_total"])],
-        ["`pbc_test_no_band_neutrophils` keeps 2,606 test rows",
-         sub["test_rows_kept"], verdict(sub["test_rows_kept"] == sub["claimed_rows_kept"])],
-        ["...of which 518 are neutrophils",
-         sub["neutrophils_kept"], verdict(sub["neutrophils_kept"] == sub["claimed_neutrophils_kept"])],
+        ["662 `SNE_` files are labelled `unsegmented-band`",
+         dis["sne_labelled_unsegmented_band"], verdict(dis["sne_labelled_unsegmented_band"] == 662)],
+        ["670 `SNE_` files are not segmented at all",
+         dis["sne_not_segmented"], verdict(dis["sne_not_segmented"] == 670)],
+        ["48 `BNE_` files are labelled segmented",
+         dis["bne_segmented"], verdict(dis["bne_segmented"] == 48)],
+        ["718 disagreements in total",
+         dis["total"], verdict(dis["total"] == 718)],
+        ["No cross-split identical images survive the exclusions",
+         f"{sum(len(v) for v in exc['residual_cross_split_identical'].values())} remaining",
+         verdict(not any(exc["residual_cross_split_identical"].values()))],
+        ["No exact duplicate carries conflicting labels after exclusions",
+         f"{len(exc['residual_conflicting_labels'])} remaining",
+         verdict(not exc["residual_conflicting_labels"])],
+        ["Every exclusion entry resolves",
+         f"{len(exc['stale'])} stale", verdict(not exc["stale"])],
     ]
+    for name, d in band["secondary_subsets"].items():
+        claims.append([f"`{name}` counts recorded in the mapping",
+                       f"{d['after_exclusions']['rows']} rows, {d['after_exclusions']['neutrophils']} neutrophils "
+                       f"(after exclusions)", ""])
     if pbc["present"]:
         neut = pbc["folders"].get("neutrophil", {})
         claims.append([
@@ -543,11 +682,11 @@ def build_report(s):
             f"{lisc['train_vs_train_aug']['identical_images']} byte-identical to a `Train` image, "
             f"out of {lisc['folders']['Train_Aug']['files']} files",
             ""])
-    L += ["## 6. Verdicts on claims in configs/class_mapping.yaml", "",
+    L += ["## 7. Verdicts on claims in configs/class_mapping.yaml", "",
           "These numbers were written into the mapping before any audit ran. Recomputed from scratch:", "",
           md_table(["claim", "measured", "verdict"], claims), ""]
 
-    L += ["## 7. Mapping validation", "",
+    L += ["## 8. Mapping validation", "",
           f"Target classes: {', '.join('`' + c + '`' for c in mapping['target_classes'])}.", "",
           "Class names observed in the data: " +
           ", ".join(f"`{c}`" for c in mapping["observed_class_names"]) + ".", "",
@@ -574,7 +713,8 @@ def main():
     pbc = audit_pbc()
     rows = read_wbcatt()
     att = audit_wbcatt(rows, pbc, mapping)
-    band = audit_band_claim(rows, mapping)
+    exclusions = audit_exclusions(mapping, pbc, rows)
+    band = audit_band_claim(rows, mapping, exclusions.pop("_dropped_names"))
     lisc = audit_lisc()
     raabin = audit_raabin()
     validation = audit_mapping(mapping, pbc, rows, lisc)
@@ -585,6 +725,7 @@ def main():
         "git": git_state(),
         "pbc": pbc,
         "wbcatt": att,
+        "exclusions": exclusions,
         "band_neutrophil_claim": band,
         "lisc": lisc,
         "raabin": raabin,

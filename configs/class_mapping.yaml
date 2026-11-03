@@ -14,11 +14,20 @@ neutrophil:
   # PBC's folder mixes band (BNE_*, 1,633), segmented (SNE_*, 1,646) and unsubtyped
   # (NEUTROPHIL_*, 50) neutrophils. DECIDED 2026-09-15: bands stay in this class for
   # training and all primary metrics, matching WBCAtt, which labels all three Neutrophil.
-  # Why not drop bands: PBC's BNE/SNE filename split disagrees with WBCAtt's
-  # nucleus_shape on 662 SNE images, so it is too noisy to filter on, and dropping it
-  # would halve the class and skew the nucleus_shape attribute.
+  #
+  # Why not drop bands: the BNE/SNE filename subtypes disagree with WBCAtt's
+  # nucleus_shape often enough to be unusable as a filter. Verified by the first audit
+  # (2026-11-03, reports/audit_report.md section 3), counting segmented as
+  # {segmented-bilobed, segmented-multilobed} and everything else as not segmented:
+  #   662  SNE_ files labelled unsegmented-band
+  #   670  SNE_ files not segmented at all (the 662 plus 5 irregular, 1 indented, 2 round)
+  #    48  BNE_ files labelled segmented
+  #   718  total disagreements, both directions
+  # The disagreement is one-sided: 40.7% of SNE_ files vs 2.9% of BNE_ files. Dropping
+  # bands by filename would also halve the class and skew the nucleus_shape attribute.
+  #
   # Raabin describes its neutrophils as mature; whether bands matter is measured with
-  # the pbc_test_no_band_neutrophils secondary subset below, never with target data.
+  # the secondary subset below, never with target data.
   - pbc:neutrophil
   - wbcatt:Neutrophil
   - lisc:neut
@@ -50,18 +59,53 @@ excluded:
   pbc:platelet: not a white blood cell
 
 # Individual files and folders left out, with reasons. These are not classes.
+# Every entry here must resolve to something that exists; the audit flags stale ones.
 excluded_files:
   pbc:neutrophil/.DS_169665.jpg: macOS .DS_Store metadata (6,148 bytes) with a .jpg name; not an image and not in WBCAtt
   lisc:Train_Aug/: augmented copies of LISC/Train added by whoever repackaged LISC; evaluation uses Train + Test only
+
+  # Cross-split duplicates. PBC stores some images twice under different filenames, so
+  # WBCAtt's by-filename split is disjoint by name but not by content: 6 test images were
+  # byte-identical to a train or val image (first audit, 2026-11-03, section 1).
+  # DECIDED 2026-11-03: drop the train/val-side copy and keep the test-side one, so the
+  # test split stays identical to the published WBCAtt split and the leak is removed where
+  # it originates. Each reason names the test image the file duplicates.
+  pbc:basophil/BA_225540.jpg: train-side copy of test image BA_786369.jpg (identical sha256)
+  pbc:basophil/BA_381452.jpg: train-side copy of test image BA_80990.jpg (identical sha256)
+  pbc:eosinophil/EO_918881.jpg: train-side copy of test image EO_890163.jpg (identical sha256)
+  pbc:monocyte/MO_997225.jpg: train-side copy of test image MO_145357.jpg (identical sha256)
+  pbc:basophil/BA_435917.jpg: val-side copy of test image BA_858229.jpg (identical sha256)
+
+  # Conflicting label. These two files are byte-identical but filed under different PBC
+  # folders and labelled differently by WBCAtt (Neutrophil in val, Eosinophil in test),
+  # so one label is certainly wrong. DECIDED 2026-11-03: drop both copies rather than
+  # adjudicate. Note this was only visible because the pair happens to be an exact
+  # duplicate; mislabelled images that are not duplicated would not be detected.
+  pbc:neutrophil/BNE_191112.jpg: byte-identical to eosinophil/EO_225902.jpg but labelled Neutrophil; one of the two labels is wrong
+  pbc:eosinophil/EO_225902.jpg: byte-identical to neutrophil/BNE_191112.jpg but labelled Eosinophil; one of the two labels is wrong
+
+  # Within-split exact duplicates (11 further groups) are left in place: they do not leak
+  # across splits, they only reweight a class slightly. Listed in the audit report.
 
 # Secondary evaluation subsets, fixed before any target-domain evaluation. Each is
 # reported alongside the primary metrics and never replaces them, and none is used for
 # training, model selection or tuning.
 secondary_subsets:
-  pbc_test_no_band_neutrophils:
+  pbc_test_segmented_filename_neutrophils_only:
     split: pbc_test
-    # Neutrophils are segmented-only: drop BNE_* (band) and NEUTROPHIL_* (unsubtyped,
-    # could be band). All other classes unchanged. Leaves 2,606 of 3,099 test images
-    # (518 neutrophils). Answers: does including bands change source-domain results?
+    # Keeps only neutrophils whose FILENAME says segmented: drops BNE_* (band) and
+    # NEUTROPHIL_* (unsubtyped, could be band). All other classes unchanged.
+    #
+    # RENAMED 2026-11-03 from pbc_test_no_band_neutrophils, which overpromised. This does
+    # not remove band neutrophils: WBCAtt labels 662 of the 1,646 SNE_ images
+    # unsegmented-band (40.7%), and they stay in. Within this subset specifically, 205 of
+    # the 518 surviving neutrophils (39.6%) are labelled bands. What it answers is narrower,
+    # and still
+    # worth reporting: does PBC's BNE/SNE filename subtyping change source-domain results?
+    # A subset defined on nucleus_shape instead would answer the band question properly;
+    # add it as a separate entry if that becomes the question.
+    #
+    # Counts after the exclusions above are applied: 2,605 of 3,098 test images, of which
+    # 518 are neutrophils. (Before exclusions: 2,606 of 3,099, same 518.)
     drop_filename_prefixes:
       pbc:neutrophil: [BNE_, NEUTROPHIL_]
