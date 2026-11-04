@@ -1,0 +1,43 @@
+# The 11 WBCAtt morphological attributes and their value vocabularies.
+#
+# One softmax head per attribute, so each attribute's values are a closed set and the
+# order below IS the class-index order for that head. Never reorder a list here without
+# invalidating every checkpoint trained against it.
+#
+# Vocabularies are written out explicitly rather than derived from the CSVs, so that a
+# value disappearing from the data (or a new one appearing) is a hard error instead of a
+# silent change in head width. Verified against all 10,298 WBCAtt rows by the first audit
+# (reports/audit_report.md section 2).
+#
+# Ordering convention: binary attributes put the negative/absent value at index 0;
+# graded attributes run low to high; otherwise alphabetical. `nil` always sits at 0.
+
+attributes:
+  cell_size: [small, big]
+  cell_shape: [round, irregular]
+  nucleus_shape:
+    - unsegmented-round
+    - unsegmented-indented
+    - unsegmented-band
+    - segmented-bilobed
+    - segmented-multilobed
+    - irregular
+  nuclear_cytoplasmic_ratio: [low, high]
+  chromatin_density: [loosely, densely]
+  # Quoted: bare no/yes are booleans in YAML, and the CSV holds the strings "no"/"yes".
+  cytoplasm_vacuole: ["no", "yes"]
+  cytoplasm_texture: [clear, frosted]
+  cytoplasm_colour: [light blue, blue, purple blue]
+  granule_type: [nil, small, round, coarse]
+  granule_colour: [nil, pink, red, purple]
+  granularity: ["no", "yes"]      # quoted for the same reason
+
+# Three rows contradict themselves: granule_type, granule_colour and granularity disagree
+# on whether the cell is granular (BNE_125415, EO_197001, EO_244392; audit section 2).
+# They are kept as-is -- each head sees the value its own column records -- because
+# dropping or repairing them would mean inventing attribute labels. Revisit if the
+# attribute heads turn out to be sensitive to three rows out of 10,298.
+known_inconsistent_rows:
+  - BNE_125415.jpg
+  - EO_197001.jpg
+  - EO_244392.jpg

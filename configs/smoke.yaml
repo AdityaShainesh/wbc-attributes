@@ -1,0 +1,33 @@
+# Smoke config. CLAUDE.md section 7: every new pipeline runs on a 500-image subset for
+# 2 epochs before any full run. This is not an experiment and its numbers are not
+# reportable -- it exists to prove the pipeline executes end to end.
+#
+# As of Session 2 there is no training loop yet, so only the data keys below are
+# consumed. The train/eval keys are here so the file is already the single source of
+# truth when src/train.py lands.
+
+run_id: smoke
+seed: 0
+deterministic: true
+
+data:
+  dataset: pbc
+  split: train
+  image_size: 224
+  normalize: imagenet       # ImageNet constants, not statistics measured from any split
+  batch_size: 16
+  shuffle: true
+  num_workers: 0            # 0 on Windows; worker startup cost exceeds the gain here
+  subset_size: 500          # smoke only; a full run must not set this
+
+eval:
+  # Source domain only. Target domains are touched once, at final evaluation, with the
+  # checkpoint already chosen (CLAUDE.md section 3).
+  datasets:
+    - {dataset: pbc, split: val}
+
+train:
+  epochs: 2
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 0.01
