@@ -1,0 +1,48 @@
+# Baseline: a plain ImageNet-pretrained ResNet-18 predicting the 5-part differential
+# directly from pixels. This is the control arm the attribute-bottleneck model is
+# measured against, so nothing here may be tuned that is not also tuned there.
+#
+#   python -m src.train --config configs/baseline_resnet18.yaml
+#
+# Reports the mean +- std over three seeds. Source domain only: the source->target drop
+# is produced later by the eval harness, once, with these checkpoints already chosen.
+
+run_id: baseline_resnet18
+seeds: [0, 1, 2]
+deterministic: true
+
+model:
+  kind: baseline_cnn
+  arch: resnet18
+  pretrained: true
+  num_classes: 5
+
+data:
+  dataset: pbc
+  split: train
+  image_size: 224           # fixed for the whole project; numbers at other sizes are not comparable
+  normalize: imagenet
+  augment: true             # flips and quarter turns only -- NOT colour jitter, which would
+                            # confound the bottleneck comparison (src/data/transforms.py)
+  batch_size: 32
+  num_workers: 0
+
+train:
+  epochs: 30
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 0.01
+  # Plain cross-entropy. Neutrophils are 32% of train and basophils 12%, so class
+  # weighting is a reasonable thing to try -- but as its own run, not folded into the
+  # baseline, or the control arm is already an intervention.
+  selection:
+    dataset: pbc
+    split: val
+  early_stopping:
+    metric: macro_f1
+    patience: 5
+
+eval:
+  datasets:
+    - {dataset: pbc, split: val}
+    - {dataset: pbc, split: test}

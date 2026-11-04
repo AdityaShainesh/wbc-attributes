@@ -15,6 +15,7 @@ pretrained backbones, not statistics measured from any dataset here, so they are
 Switching to PBC-train statistics is a legitimate alternative; it must be computed from
 the PBC train split only and recorded in the config.
 """
+import torch
 from PIL import Image
 from torchvision import transforms
 
@@ -22,6 +23,15 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 NORMALIZATIONS = {"imagenet": (IMAGENET_MEAN, IMAGENET_STD)}
+
+
+def _normalization(name):
+    try:
+        return NORMALIZATIONS[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown normalization {name!r}; known: {', '.join(NORMALIZATIONS)}"
+        ) from None
 
 
 class PadToSquare:
@@ -42,14 +52,44 @@ class PadToSquare:
         return f"{type(self).__name__}()"
 
 
+class RandomRot90:
+    """Rotate by a random multiple of 90 degrees. Lossless on a square image."""
+
+    def __call__(self, image):
+        turns = int(torch.randint(0, 4, (1,)).item())
+        return image if turns == 0 else image.rotate(90 * turns, expand=False)
+
+    def __repr__(self):
+        return f"{type(self).__name__}()"
+
+
+def build_train_transform(image_size=224, normalize="imagenet", augment=True):
+    """Training transform: geometric augmentation only, deliberately no colour jitter.
+
+    Blood cells have no canonical orientation, so flips and quarter turns are free
+    label-preserving variation.
+
+    Colour and stain augmentation is left out on purpose. It is itself a
+    domain-generalization intervention, so putting it in the baseline would confound the
+    experiment: if the attribute bottleneck then generalized better, its contribution
+    could not be separated from the augmentation's. If colour augmentation is tested, it
+    has to be an explicit arm applied identically to both models, recorded in the config.
+    """
+    mean, std = _normalization(normalize)
+    steps = [PadToSquare(), transforms.Resize((image_size, image_size), interpolation=Image.BILINEAR)]
+    if augment:
+        steps += [
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
+            RandomRot90(),
+        ]
+    steps += [transforms.ToTensor(), transforms.Normalize(mean, std)]
+    return transforms.Compose(steps)
+
+
 def build_transform(image_size=224, normalize="imagenet"):
     """Deterministic eval-style transform. No augmentation: that belongs to training."""
-    try:
-        mean, std = NORMALIZATIONS[normalize]
-    except KeyError:
-        raise ValueError(
-            f"unknown normalization {normalize!r}; known: {', '.join(NORMALIZATIONS)}"
-        ) from None
+    mean, std = _normalization(normalize)
     return transforms.Compose([
         PadToSquare(),
         transforms.Resize((image_size, image_size), interpolation=Image.BILINEAR),

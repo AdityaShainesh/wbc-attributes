@@ -10,6 +10,7 @@ Archives are extracted as-is; choosing which files belong to the label space is 
 of configs/class_mapping.yaml, not this script. The only thing dropped is PBC's
 __MACOSX/ metadata folder. LISC ships as .rar, which needs 7-Zip.
 """
+import os
 import shutil
 import subprocess
 import sys
@@ -26,15 +27,26 @@ PBC_ZIP = (
 LISC_RAR = RAW / "LISC.rar"
 
 
-def find_7z():
-    for candidate in (
-        shutil.which("7z"),
-        r"C:\Program Files\7-Zip\7z.exe",
-        r"C:\Program Files (x86)\7-Zip\7z.exe",
-    ):
-        if candidate and Path(candidate).exists():
-            return candidate
-    sys.exit("7-Zip not found; install it to extract LISC.rar")
+def find_rar_tool():
+    """First available RAR extractor, as (flavour, executable).
+
+    Windows usually has 7-Zip at a fixed path and nothing on PATH; a fresh Linux box
+    (a rented GPU instance, say) usually has neither until p7zip-full or unrar is
+    installed. Both are handled so this script does not need editing per machine.
+    """
+    for name in ("7z", "7za", "7zz", "unrar", "bsdtar"):
+        found = shutil.which(name)
+        if found:
+            return ("7z" if name.startswith("7z") else name), found
+    for candidate in (r"C:\Program Files\7-Zip\7z.exe", r"C:\Program Files (x86)\7-Zip\7z.exe"):
+        if Path(candidate).exists():
+            return "7z", candidate
+    sys.exit(
+        "no RAR extractor found. Install one of:\n"
+        "  Windows: 7-Zip (https://7-zip.org)\n"
+        "  Debian/Ubuntu: apt-get install p7zip-full  (or unrar)\n"
+        "  macOS: brew install p7zip"
+    )
 
 
 def unzip_without_macosx(archive, dest):
@@ -43,7 +55,15 @@ def unzip_without_macosx(archive, dest):
 
 
 def unrar(archive, dest):
-    subprocess.run([find_7z(), "x", "-y", f"-o{dest}", str(archive)], check=True, stdout=subprocess.DEVNULL)
+    flavour, executable = find_rar_tool()
+    dest.mkdir(parents=True, exist_ok=True)  # unrar and bsdtar need the target to exist
+    if flavour == "7z":
+        command = [executable, "x", "-y", f"-o{dest}", str(archive)]
+    elif flavour == "unrar":
+        command = [executable, "x", "-o+", str(archive), f"{dest}{os.sep}"]
+    else:  # bsdtar; handles rar only where libarchive was built with support for it
+        command = [executable, "-xf", str(archive), "-C", str(dest)]
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
 
 
 def extract(archive, top_folder, unpack):

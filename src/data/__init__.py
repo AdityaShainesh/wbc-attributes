@@ -4,33 +4,59 @@ build_dataset / build_dataloader are the only entry points training and eval sho
 so which dataset a run touched is always a line in its config rather than a call site
 somewhere in the code.
 """
+import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from src.data.lisc import LiscDataset
 from src.data.mapping import MappingError, load_attribute_space, load_label_space
 from src.data.pbc import PbcDataset
+from src.data.transforms import build_train_transform, build_transform
+from src.utils.seed import seed_worker
 
 # Target domains are listed here so an attempt to load one is a deliberate, visible act.
 SOURCE_DATASETS = ("pbc",)
 TARGET_DATASETS = ("lisc",)
 
 
-def build_dataset(config, labels=None, attributes=None):
-    """Build the dataset named by config["dataset"] / config["split"]."""
+def build_dataset(config, labels=None, attributes=None, train=False):
+    """Build the dataset named by config["dataset"] / config["split"].
+
+    train=True swaps in the augmenting transform. Augmentation is never applied to an
+    evaluation split, so this is a caller's decision rather than a config key that could
+    silently leave augmentation on at test time.
+    """
     name = config["dataset"]
     image_size = config.get("image_size", 224)
     normalize = config.get("normalize", "imagenet")
+    transform = (build_train_transform(image_size, normalize, config.get("augment", True))
+                 if train else build_transform(image_size, normalize))
+
     if name == "pbc":
-        return PbcDataset(config["split"], image_size=image_size, normalize=normalize,
-                          labels=labels, attributes=attributes)
-    if name == "lisc":
-        return LiscDataset(config["split"], image_size=image_size, normalize=normalize,
-                           labels=labels)
-    raise MappingError(
-        f"unknown dataset {name!r}; known source datasets {SOURCE_DATASETS}, "
-        f"target datasets {TARGET_DATASETS}"
-    )
+        dataset = PbcDataset(config["split"], labels=labels, attributes=attributes,
+                             transform=transform)
+    elif name == "lisc":
+        dataset = LiscDataset(config["split"], labels=labels, transform=transform)
+    else:
+        raise MappingError(
+            f"unknown dataset {name!r}; known source datasets {SOURCE_DATASETS}, "
+            f"target datasets {TARGET_DATASETS}"
+        )
+    return maybe_subset(dataset, config)
+
+
+def maybe_subset(dataset, config):
+    """Take a fixed random subset if config["subset_size"] is set (smoke runs only).
+
+    The subset is drawn with its own seed, not the run seed, so all three seeds of a
+    smoke run see the same images and differ only in initialisation and shuffling.
+    """
+    size = config.get("subset_size")
+    if not size or size >= len(dataset):
+        return dataset
+    rng = np.random.RandomState(config.get("subset_seed", 0))
+    indices = sorted(rng.choice(len(dataset), size=size, replace=False).tolist())
+    return Subset(dataset, indices)
 
 
 def collate(batch):
@@ -49,9 +75,10 @@ def collate(batch):
     return images, targets, torch.stack(attributes)
 
 
-def build_dataloader(config, dataset=None, labels=None, attributes=None):
+def build_dataloader(config, dataset=None, labels=None, attributes=None, train=False):
     """DataLoader over build_dataset(config), with shuffling seeded from the config."""
-    dataset = dataset or build_dataset(config, labels=labels, attributes=attributes)
+    if dataset is None:
+        dataset = build_dataset(config, labels=labels, attributes=attributes, train=train)
     generator = None
     if config.get("shuffle", False):
         generator = torch.Generator().manual_seed(config.get("seed", 0))
@@ -62,12 +89,13 @@ def build_dataloader(config, dataset=None, labels=None, attributes=None):
         num_workers=config.get("num_workers", 0),
         collate_fn=collate,
         generator=generator,
+        worker_init_fn=seed_worker if config.get("num_workers", 0) else None,
         drop_last=config.get("drop_last", False),
     )
 
 
 __all__ = [
-    "build_dataset", "build_dataloader", "collate",
+    "build_dataset", "build_dataloader", "collate", "maybe_subset",
     "PbcDataset", "LiscDataset", "MappingError",
     "load_label_space", "load_attribute_space",
     "SOURCE_DATASETS", "TARGET_DATASETS",
