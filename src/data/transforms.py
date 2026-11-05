@@ -96,6 +96,25 @@ def build_train_transform(image_size=224, normalize="imagenet", augment=True, st
     return transforms.Compose(steps)
 
 
+def build_cached_transform(normalize="imagenet", augment=False):
+    """For images already stain-normalised, padded and resized by the cache.
+
+    Deliberately excludes PadToSquare and Resize: applying them twice would be a silent
+    no-op today and a silent bug the moment the cache size and the run size diverge.
+    """
+    mean, std = _normalization(normalize)
+    steps = [transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip(), RandomRot90()] if augment else []
+    return transforms.Compose(steps + [transforms.ToTensor(), transforms.Normalize(mean, std)])
+
+
+def build_deterministic_steps(image_size=224, stain=None):
+    """Exactly the steps the cache bakes in: stain normalisation, pad, resize."""
+    return transforms.Compose(_stain_steps(stain) + [
+        PadToSquare(),
+        transforms.Resize((image_size, image_size), interpolation=Image.BILINEAR),
+    ])
+
+
 def build_transform(image_size=224, normalize="imagenet", stain=None):
     """Deterministic eval-style transform. No augmentation: that belongs to training.
 

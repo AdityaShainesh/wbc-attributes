@@ -29,6 +29,9 @@ def results_dir(override=None):
 def hardware():
     """What the run actually executed on. Matters for reading wall-clock times."""
     info = {
+        # Infrastructure overrides that do not change what a run computes, but do change
+        # its wall-clock time; recorded so timings are readable after the fact.
+        "num_workers_override": os.environ.get("WBC_NUM_WORKERS"),
         "platform": platform.platform(),
         "processor": platform.processor() or platform.machine(),
         "python": platform.python_version(),

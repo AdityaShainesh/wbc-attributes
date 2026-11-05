@@ -4,15 +4,35 @@ build_dataset / build_dataloader are the only entry points training and eval sho
 so which dataset a run touched is always a line in its config rather than a call site
 somewhere in the code.
 """
+import os
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 
+from src.data.cache import CachedStainDataset
 from src.data.lisc import LiscDataset
 from src.data.mapping import MappingError, load_attribute_space, load_label_space
 from src.data.pbc import PbcDataset
-from src.data.transforms import build_train_transform, build_transform
+from src.data.transforms import build_cached_transform, build_train_transform, build_transform
 from src.utils.seed import seed_worker
+
+
+def resolve_num_workers(config):
+    """Loader workers, overridable with WBC_NUM_WORKERS.
+
+    Infrastructure, not an experimental setting: it changes how fast a run goes and
+    nothing about what it computes. The override exists so the same unmodified config
+    can run on Windows (0 workers) and on a Kaggle GPU box (4) without editing a file,
+    which CLAUDE.md section 5 forbids. The effective value is recorded in the results.
+    """
+    override = os.environ.get("WBC_NUM_WORKERS")
+    if override is None:
+        return int(config.get("num_workers", 0))
+    try:
+        return max(0, int(override))
+    except ValueError:
+        raise ValueError(f"WBC_NUM_WORKERS must be an integer, got {override!r}") from None
 
 # Target domains are listed here so an attempt to load one is a deliberate, visible act.
 SOURCE_DATASETS = ("pbc",)
@@ -32,8 +52,14 @@ def build_dataset(config, labels=None, attributes=None, train=False):
     # The stain setting must be identical for training and evaluation, so it is read
     # from the same config key in both branches rather than passed in by the caller.
     stain = config.get("stain_norm")
-    transform = (build_train_transform(image_size, normalize, config.get("augment", True), stain)
-                 if train else build_transform(image_size, normalize, stain))
+    augment = train and config.get("augment", True)
+    cached = bool(stain) and stain.get("cache", True)
+
+    # With a cache the deterministic steps are already baked into the stored image, so
+    # the live transform must not repeat them.
+    transform = (build_cached_transform(normalize, augment) if cached else
+                 build_train_transform(image_size, normalize, augment, stain) if train else
+                 build_transform(image_size, normalize, stain))
 
     if name == "pbc":
         dataset = PbcDataset(config["split"], labels=labels, attributes=attributes,
@@ -45,7 +71,12 @@ def build_dataset(config, labels=None, attributes=None, train=False):
             f"unknown dataset {name!r}; known source datasets {SOURCE_DATASETS}, "
             f"target datasets {TARGET_DATASETS}"
         )
-    return maybe_subset(dataset, config)
+    # Subset first: there is no point validating or reading cached images for records
+    # this run will never touch.
+    dataset = maybe_subset(dataset, config)
+    if cached:
+        dataset = CachedStainDataset(dataset, stain["method"], image_size, transform)
+    return dataset
 
 
 def maybe_subset(dataset, config):
@@ -85,14 +116,16 @@ def build_dataloader(config, dataset=None, labels=None, attributes=None, train=F
     generator = None
     if config.get("shuffle", False):
         generator = torch.Generator().manual_seed(config.get("seed", 0))
+    workers = resolve_num_workers(config)
     return DataLoader(
         dataset,
         batch_size=config.get("batch_size", 32),
         shuffle=config.get("shuffle", False),
-        num_workers=config.get("num_workers", 0),
+        num_workers=workers,
         collate_fn=collate,
         generator=generator,
-        worker_init_fn=seed_worker if config.get("num_workers", 0) else None,
+        worker_init_fn=seed_worker if workers else None,
+        persistent_workers=workers > 0,
         drop_last=config.get("drop_last", False),
     )
 
