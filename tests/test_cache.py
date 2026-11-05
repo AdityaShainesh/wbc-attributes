@@ -175,5 +175,9 @@ def test_cached_path_works_when_raw_holds_symlinked_children(tmp_path, monkeypat
     through_raw = raw / "PBC_dataset_normal_DIB" / "basophil" / "BA_1.jpg"
     expected = tmp_path / "cache" / "reinhard_224" / "PBC_dataset_normal_DIB" / "basophil" / "BA_1.png"
     assert cache_module.cached_path("reinhard", 224, through_raw) == expected
-    # and the same cache entry however the caller spells the path
-    assert cache_module.cached_path("reinhard", 224, image) == expected
+
+    # The reverse direction is deliberately unsupported: given only the resolved path
+    # there is no way back through an arbitrary child symlink, and nothing needs it --
+    # every dataset builds its paths as RAW/<relative>. It must fail loudly, not guess.
+    with pytest.raises(ValueError, match="stain cache"):
+        cache_module.cached_path("reinhard", 224, image)
