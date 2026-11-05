@@ -17,8 +17,10 @@ CONFIGS = Path(__file__).resolve().parents[2] / "configs"
 MAPPING_PATH = CONFIGS / "class_mapping.yaml"
 ATTRIBUTES_PATH = CONFIGS / "attributes.yaml"
 
-# Keys in class_mapping.yaml that are not target classes.
-RESERVED = ("excluded", "excluded_files", "secondary_subsets")
+# Keys in class_mapping.yaml that are not target classes. Anything else at the top level
+# is taken to be one of the five differential classes, so a new section must be added
+# here -- the 5-class check fails loudly otherwise, which is the intended behaviour.
+RESERVED = ("excluded", "excluded_files", "secondary_subsets", "target_splits")
 N_CLASSES = 5
 
 

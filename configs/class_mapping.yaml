@@ -5,7 +5,7 @@
 #   pbc     top-level folder name in data/raw/PBC_dataset_normal_DIB/
 #   wbcatt  `label` column of data/raw/pbc_attr_v1_{train,val,test}.csv
 #   lisc    filename prefix before the first "_" in data/raw/LISC/{Train,Test}/
-#   raabin  TODO - not downloaded yet; any Raabin class is unmapped until added here
+#   raabin  class folder name in data/raw/raabin/{Train,TestA,Test-B}/
 #
 # Matching is exact and case-sensitive. A class name found in the data that is not
 # listed exactly once, under one of the five classes or under `excluded`, is a hard error.
@@ -31,26 +31,31 @@ neutrophil:
   - pbc:neutrophil
   - wbcatt:Neutrophil
   - lisc:neut
+  - raabin:Neutrophil
 
 lymphocyte:
   - pbc:lymphocyte
   - wbcatt:Lymphocyte
   - lisc:lymp
+  - raabin:Lymphocyte
 
 monocyte:
   - pbc:monocyte
   - wbcatt:Monocyte
   - lisc:mono
+  - raabin:Monocyte
 
 eosinophil:
   - pbc:eosinophil
   - wbcatt:Eosinophil
   - lisc:eosi
+  - raabin:Eosinophil
 
 basophil:
   - pbc:basophil
   - wbcatt:Basophil
   - lisc:Baso
+  - raabin:Basophil
 
 excluded:
   # class_name: reason
@@ -86,6 +91,40 @@ excluded_files:
 
   # Within-split exact duplicates (11 further groups) are left in place: they do not leak
   # across splits, they only reweight a class slightly. Listed in the audit report.
+
+# Target-domain splits: what each one is for and what label space it actually covers.
+# The eval harness reads this rather than assuming every target split carries all five
+# classes, because Raabin's Test-B does not.
+#
+# role: zero_shot_eval      evaluated once, with the checkpoint already chosen
+#       dann_adaptation     unlabeled images for Model 4's domain head only, under the
+#                           CLAUDE.md section 3 exception; labels are never loaded, and
+#                           an adaptation split is never also an evaluation split
+#       excluded            not used at all
+target_splits:
+  lisc:
+    Train:     {role: dann_adaptation, classes: 5, images: 180}
+    Test:      {role: zero_shot_eval,  classes: 5, images: 77}
+    Train_Aug: {role: excluded}
+  raabin:
+    Train:  {role: dann_adaptation, classes: 5, images: 10175}
+    TestA:  {role: zero_shot_eval,  classes: 5, images: 4339}
+    Test-B:
+      role: zero_shot_eval
+      classes: 2
+      images: 2119
+      # DECIDED 2026-11-05. Test-B contains only Lymphocyte (148) and Neutrophil (1,971);
+      # basophil, eosinophil and monocyte are absent. It is also the only split imaged
+      # with the second microscope and camera, so it carries the largest domain shift in
+      # the project and is worth keeping.
+      #
+      # Five-class macro-F1 here would be meaningless: three classes have zero support,
+      # which caps the metric at 0.4 however good the model is. Test-B is therefore
+      # reported as a TWO-CLASS evaluation in its own labelled row, never averaged with
+      # or compared directly against the five-class TestA and LISC numbers.
+      present_classes: [lymphocyte, neutrophil]
+      metrics: [macro_f1_2class, per_class_recall]
+      note: not comparable to 5-class rows; report separately and label the class count
 
 # Secondary evaluation subsets, fixed before any target-domain evaluation. Each is
 # reported alongside the primary metrics and never replaces them, and none is used for

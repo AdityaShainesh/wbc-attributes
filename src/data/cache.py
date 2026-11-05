@@ -30,8 +30,13 @@ def cache_dir(method, image_size):
 
 
 def cached_path(method, image_size, raw_path):
-    """Where the normalised copy of a raw image lives. PNG: lossless, no re-compression."""
-    relative = Path(raw_path).resolve().relative_to(RAW)
+    """Where the normalised copy of a raw image lives. PNG: lossless, no re-compression.
+
+    Both sides are resolved before comparison. data/raw is frequently a symlink -- on
+    Kaggle it points into /kaggle/input -- so resolving only the image path puts it in a
+    different tree from RAW and relative_to() raises.
+    """
+    relative = Path(raw_path).resolve().relative_to(RAW.resolve())
     return cache_dir(method, image_size) / relative.with_suffix(".png")
 
 

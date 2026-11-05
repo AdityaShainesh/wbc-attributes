@@ -119,3 +119,31 @@ def test_the_override_is_recorded_in_the_results_hardware(monkeypatch):
 
     monkeypatch.setenv("WBC_NUM_WORKERS", "4")
     assert hardware()["num_workers_override"] == "4"
+
+
+def test_cached_path_works_when_data_raw_is_a_symlink(tmp_path, monkeypatch):
+    """Regression: Kaggle mounts data/raw as a symlink into /kaggle/input.
+
+    Resolving only the image path put it in a different tree from RAW, so
+    relative_to() raised ValueError and both Model 2 runs died on startup.
+    """
+    from src.data import cache as cache_module
+
+    real = tmp_path / "real_raw"
+    (real / "PBC_dataset_normal_DIB" / "basophil").mkdir(parents=True)
+    image = real / "PBC_dataset_normal_DIB" / "basophil" / "BA_1.jpg"
+    image.write_bytes(b"")
+
+    link = tmp_path / "linked_raw"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted on this platform")
+
+    monkeypatch.setattr(cache_module, "RAW", link)
+    monkeypatch.setattr(cache_module, "CACHE_ROOT", tmp_path / "cache")
+    # The path as a dataset would hand it over: through the symlink.
+    through_link = link / "PBC_dataset_normal_DIB" / "basophil" / "BA_1.jpg"
+    assert cache_module.cached_path("reinhard", 224, through_link).name == "BA_1.png"
+    assert cache_module.cached_path("reinhard", 224, image) == \
+        cache_module.cached_path("reinhard", 224, through_link)
