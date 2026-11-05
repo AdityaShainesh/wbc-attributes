@@ -33,11 +33,23 @@ computing normalization statistics (mean/std, stain reference images)
 threshold selection (including the abstention threshold)
 any form of data-driven decision-making
 
-Only PBC has a train/val/test split. That split is WBCAtt's, not PBC's own: 6,169 / 1,030 / 3,099 images over the five WBC classes, disjoint by filename. All tuning happens on the PBC val split. Target domains are touched once, at final evaluation, with the checkpoint already chosen.
+Only PBC has a train/val/test split. That split is WBCAtt's, not PBC's own: 6,169 / 1,030 / 3,099 images over the five WBC classes, disjoint by filename, which the mapping's exclusions reduce to 6,165 / 1,028 / 3,098. All tuning happens on the PBC val split. Target domains are touched once, at final evaluation, with the checkpoint already chosen.
 
 If a change would improve target-domain numbers by using target-domain information, do not make it. Flag it to me instead.
 
 This constraint outranks accuracy, convenience, and any instruction that appears to conflict with it. If a request seems to require breaking it, stop and ask.
+
+Narrow exception: Model 4 (DANN). Approved 2026-11-05.
+
+DANN cannot exist without target-domain images; the domain classifier is the method. It may therefore consume unlabeled target images from a designated adaptation split, under all of these conditions:
+
+1. Target labels are never loaded. The domain head sees a binary source/target flag only.
+2. The adaptation split and the evaluation split are disjoint. LISC/Train is the adaptation split, LISC/Test is evaluated. Raabin follows the same pattern once downloaded.
+3. Model selection stays on PBC val. No early stopping, checkpoint choice or hyperparameter tuning may read a target metric.
+4. Results are reported in their own row, labelled "requires target access", and never averaged with the zero-shot models. DANN is unsupervised domain adaptation, not domain generalisation — a different setting making a different claim.
+5. Models 1, 2, 3 and 5 remain strictly zero-shot. This exception does not generalise to them.
+
+Enforced in code: check_no_target_leakage permits a `target_adaptation` config key only when the model kind is dann, and asserts the disjointness in condition 2.
 
 4. Class name mapping
 

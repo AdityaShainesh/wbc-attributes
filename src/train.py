@@ -30,6 +30,19 @@ from src.utils.seed import seed_everything
 
 OPTIMIZERS = {"adamw": torch.optim.AdamW, "sgd": torch.optim.SGD}
 
+# Preprocessing that must be identical on every split a run touches. A model trained on
+# Macenko-normalised images and evaluated on raw ones would show a domain drop that is
+# an artefact of the pipeline, not of the domain.
+INHERITED_FROM_DATA = ("image_size", "normalize", "stain_norm", "batch_size", "num_workers")
+
+
+def eval_spec(config, spec):
+    """An eval/selection dataset spec, inheriting preprocessing from config["data"]."""
+    merged = {k: config["data"][k] for k in INHERITED_FROM_DATA if k in config["data"]}
+    merged.update(spec)          # an explicit key in the spec still wins
+    merged["augment"] = False    # never augment an evaluation split
+    return merged
+
 
 class LeakageError(Exception):
     """A config would have let a target domain influence training or selection."""
@@ -101,10 +114,8 @@ def run_one_seed(config, seed, labels, attributes, device, results_directory=Non
         dict(config["data"], seed=seed, shuffle=True),
         labels=labels, attributes=attributes, train=True,
     )
-    selection_spec = dict(train_spec.get("selection", {"dataset": "pbc", "split": "val"}))
-    selection_spec.setdefault("image_size", config["data"].get("image_size", 224))
     selection_loader = build_dataloader(
-        dict(selection_spec, batch_size=config["data"].get("batch_size", 32)),
+        eval_spec(config, train_spec.get("selection", {"dataset": "pbc", "split": "val"})),
         labels=labels, attributes=attributes,
     )
 
@@ -158,11 +169,7 @@ def run_one_seed(config, seed, labels, attributes, device, results_directory=Non
     metrics = {}
     for spec in config["eval"]["datasets"]:
         name = f"{spec['dataset']}_{spec['split']}"
-        loader = build_dataloader(
-            dict(spec, batch_size=config["data"].get("batch_size", 32),
-                 image_size=config["data"].get("image_size", 224)),
-            labels=labels, attributes=attributes,
-        )
+        loader = build_dataloader(eval_spec(config, spec), labels=labels, attributes=attributes)
         metrics[name] = evaluate(model, loader, classes, device)
 
     return {

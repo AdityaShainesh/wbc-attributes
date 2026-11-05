@@ -63,7 +63,15 @@ class RandomRot90:
         return f"{type(self).__name__}()"
 
 
-def build_train_transform(image_size=224, normalize="imagenet", augment=True):
+def _stain_steps(stain):
+    """Stain normalisation, applied first so it sees the original pixels."""
+    if not stain:
+        return []
+    from src.data.stain import build_normalizer  # imported lazily; needs scikit-image
+    return [build_normalizer(stain["method"] if isinstance(stain, dict) else stain)]
+
+
+def build_train_transform(image_size=224, normalize="imagenet", augment=True, stain=None):
     """Training transform: geometric augmentation only, deliberately no colour jitter.
 
     Blood cells have no canonical orientation, so flips and quarter turns are free
@@ -76,7 +84,8 @@ def build_train_transform(image_size=224, normalize="imagenet", augment=True):
     has to be an explicit arm applied identically to both models, recorded in the config.
     """
     mean, std = _normalization(normalize)
-    steps = [PadToSquare(), transforms.Resize((image_size, image_size), interpolation=Image.BILINEAR)]
+    steps = _stain_steps(stain)
+    steps += [PadToSquare(), transforms.Resize((image_size, image_size), interpolation=Image.BILINEAR)]
     if augment:
         steps += [
             transforms.RandomHorizontalFlip(),
@@ -87,10 +96,14 @@ def build_train_transform(image_size=224, normalize="imagenet", augment=True):
     return transforms.Compose(steps)
 
 
-def build_transform(image_size=224, normalize="imagenet"):
-    """Deterministic eval-style transform. No augmentation: that belongs to training."""
+def build_transform(image_size=224, normalize="imagenet", stain=None):
+    """Deterministic eval-style transform. No augmentation: that belongs to training.
+
+    `stain` must match the training transform's. A model trained on Macenko-normalised
+    images and evaluated on raw ones would show a spurious domain drop.
+    """
     mean, std = _normalization(normalize)
-    return transforms.Compose([
+    return transforms.Compose(_stain_steps(stain) + [
         PadToSquare(),
         transforms.Resize((image_size, image_size), interpolation=Image.BILINEAR),
         transforms.ToTensor(),

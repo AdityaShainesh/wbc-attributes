@@ -29,8 +29,11 @@ def build_dataset(config, labels=None, attributes=None, train=False):
     name = config["dataset"]
     image_size = config.get("image_size", 224)
     normalize = config.get("normalize", "imagenet")
-    transform = (build_train_transform(image_size, normalize, config.get("augment", True))
-                 if train else build_transform(image_size, normalize))
+    # The stain setting must be identical for training and evaluation, so it is read
+    # from the same config key in both branches rather than passed in by the caller.
+    stain = config.get("stain_norm")
+    transform = (build_train_transform(image_size, normalize, config.get("augment", True), stain)
+                 if train else build_transform(image_size, normalize, stain))
 
     if name == "pbc":
         dataset = PbcDataset(config["split"], labels=labels, attributes=attributes,

@@ -1,0 +1,62 @@
+# Model 2a of 5: stain normalisation, Macenko (2009), via torchstain.
+#
+#   python -m src.train --config configs/model2a_macenko.yaml
+#
+# Identical to model1_direct_cnn except that every image -- train, val, test and later
+# the target domains -- is mapped onto the stain statistics of one reference image
+# before the network sees it.
+#
+# The reference is configs/stain_reference.yaml, chosen from the PBC TRAIN split by
+# scripts/choose_stain_reference.py. Picking it from Raabin or LISC would leak target
+# information into this arm while leaving every reported number looking clean
+# (CLAUDE.md section 3).
+#
+# READ reports/stain_normalisation.md BEFORE INTERPRETING THIS RUN. Macenko assumes H&E
+# histology with a near-white background; PBC is Wright-Giemsa on a tinted background.
+# It fails to map its own reference image onto itself (46.8 mean-RGB shift vs Reinhard's
+# 0.5) and leaves most of a synthetic tint gap in place on eosinophils. It is run
+# unmodified anyway: the question this arm answers is what the literature method does on
+# blood smears, so a poor result here is a finding, not a tuning failure.
+run_id: model2a_macenko
+seeds: [0, 1, 2]
+deterministic: true
+
+model:
+  kind: baseline_cnn
+  arch: resnet50
+  pretrained: true
+  num_classes: 5
+
+data:
+  dataset: pbc
+  split: train
+  image_size: 224           # fixed for the whole project; numbers at other sizes are not comparable
+                            # (the Phase II deck says ~360 px; 224 chosen 2026-11-05 to match
+                            #  ImageNet pretraining and the compute budget -- update the deck)
+  normalize: imagenet
+  stain_norm:               # applied to EVERY split, train and eval alike
+    method: macenko
+  augment: true             # flips and quarter turns only -- NOT colour jitter, which would
+                            # confound the bottleneck comparison (src/data/transforms.py)
+  batch_size: 32
+  num_workers: 0
+
+train:
+  epochs: 30
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 0.01
+  # Plain cross-entropy. Neutrophils are 32% of train and basophils 12%, so class
+  # weighting is a reasonable thing to try -- but as its own run, not folded into the
+  # baseline, or the control arm is already an intervention.
+  selection:
+    dataset: pbc
+    split: val
+  early_stopping:
+    metric: macro_f1
+    patience: 5
+
+eval:
+  datasets:
+    - {dataset: pbc, split: val}
+    - {dataset: pbc, split: test}
