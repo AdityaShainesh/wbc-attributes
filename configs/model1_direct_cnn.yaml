@@ -1,19 +1,23 @@
-# Baseline: a plain ImageNet-pretrained ResNet-18 predicting the 5-part differential
-# directly from pixels. This is the control arm the attribute-bottleneck model is
-# measured against, so nothing here may be tuned that is not also tuned there.
+# Model 1 of 5: Direct CNN. An ImageNet-pretrained ResNet-50 predicting the 5-part
+# differential straight from pixels, with no stain normalisation, no colour augmentation
+# and no domain adaptation. Sets the cross-lab drop that models 2-5 have to beat.
 #
-#   python -m src.train --config configs/baseline_resnet18.yaml
+#   python -m src.train --config configs/model1_direct_cnn.yaml
+#
+# PROTOCOL -- identical for all five models, including the teammate's bottleneck:
+# ResNet-50 backbone, 224 px, same splits, same seeds, same metrics. Anything changed
+# here must be changed in every other model's config, or the comparison is void.
 #
 # Reports the mean +- std over three seeds. Source domain only: the source->target drop
 # is produced later by the eval harness, once, with these checkpoints already chosen.
 
-run_id: baseline_resnet18
+run_id: model1_direct_cnn
 seeds: [0, 1, 2]
 deterministic: true
 
 model:
   kind: baseline_cnn
-  arch: resnet18
+  arch: resnet50
   pretrained: true
   num_classes: 5
 
@@ -21,6 +25,8 @@ data:
   dataset: pbc
   split: train
   image_size: 224           # fixed for the whole project; numbers at other sizes are not comparable
+                            # (the Phase II deck says ~360 px; 224 chosen 2026-11-05 to match
+                            #  ImageNet pretraining and the compute budget -- update the deck)
   normalize: imagenet
   augment: true             # flips and quarter turns only -- NOT colour jitter, which would
                             # confound the bottleneck comparison (src/data/transforms.py)
