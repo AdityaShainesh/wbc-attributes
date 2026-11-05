@@ -147,3 +147,33 @@ def test_cached_path_works_when_data_raw_is_a_symlink(tmp_path, monkeypatch):
     assert cache_module.cached_path("reinhard", 224, through_link).name == "BA_1.png"
     assert cache_module.cached_path("reinhard", 224, image) == \
         cache_module.cached_path("reinhard", 224, through_link)
+
+
+def test_cached_path_works_when_raw_holds_symlinked_children(tmp_path, monkeypatch):
+    """Regression: several Kaggle datasets means data/raw is real but its children aren't.
+
+    data/raw is then a local directory whose entries point off into separate
+    /kaggle/input trees, so resolving both sides no longer agrees either.
+    """
+    from src.data import cache as cache_module
+
+    elsewhere = tmp_path / "input" / "some-dataset" / "PBC_dataset_normal_DIB" / "basophil"
+    elsewhere.mkdir(parents=True)
+    image = elsewhere / "BA_1.jpg"
+    image.write_bytes(b"")
+
+    raw = tmp_path / "data" / "raw"
+    raw.mkdir(parents=True)
+    try:
+        (raw / "PBC_dataset_normal_DIB").symlink_to(elsewhere.parent, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted on this platform")
+
+    monkeypatch.setattr(cache_module, "RAW", raw)
+    monkeypatch.setattr(cache_module, "CACHE_ROOT", tmp_path / "cache")
+
+    through_raw = raw / "PBC_dataset_normal_DIB" / "basophil" / "BA_1.jpg"
+    expected = tmp_path / "cache" / "reinhard_224" / "PBC_dataset_normal_DIB" / "basophil" / "BA_1.png"
+    assert cache_module.cached_path("reinhard", 224, through_raw) == expected
+    # and the same cache entry however the caller spells the path
+    assert cache_module.cached_path("reinhard", 224, image) == expected

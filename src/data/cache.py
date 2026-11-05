@@ -29,15 +29,38 @@ def cache_dir(method, image_size):
     return CACHE_ROOT / f"{method}_{image_size}"
 
 
-def cached_path(method, image_size, raw_path):
-    """Where the normalised copy of a raw image lives. PNG: lossless, no re-compression.
+def relative_to_raw(raw_path):
+    """Path of a raw image relative to data/raw, whatever symlinks are in the way.
 
-    Both sides are resolved before comparison. data/raw is frequently a symlink -- on
-    Kaggle it points into /kaggle/input -- so resolving only the image path puts it in a
-    different tree from RAW and relative_to() raises.
+    Three layouts all occur in practice and each breaks a different naive version:
+
+      data/raw is a real directory          -- plain relative_to works
+      data/raw is a symlink                 -- Kaggle, one dataset: resolving only the
+                                               image path lands it in /kaggle/input
+                                               while RAW stays under /kaggle/working
+      data/raw holds symlinked children     -- Kaggle, several datasets: now RAW itself
+                                               is local and real, but each child points
+                                               off into a different input tree
+
+    So: try the path as given, then with both sides resolved, then the resolved path
+    against the unresolved root. The relative path is identical in every case, which is
+    what keeps one cache valid across all of them.
     """
-    relative = Path(raw_path).resolve().relative_to(RAW.resolve())
-    return cache_dir(method, image_size) / relative.with_suffix(".png")
+    path = Path(raw_path)
+    for candidate, base in ((path, RAW), (path.resolve(), RAW.resolve()), (path.resolve(), RAW)):
+        try:
+            return candidate.relative_to(base)
+        except ValueError:
+            continue
+    raise ValueError(
+        f"{raw_path} is not under {RAW} (resolved: {RAW.resolve()}); the stain cache "
+        f"cannot work out where to store it"
+    )
+
+
+def cached_path(method, image_size, raw_path):
+    """Where the normalised copy of a raw image lives. PNG: lossless, no re-compression."""
+    return cache_dir(method, image_size) / relative_to_raw(raw_path).with_suffix(".png")
 
 
 class CachedStainDataset(Dataset):
