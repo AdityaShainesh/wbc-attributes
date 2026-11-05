@@ -28,6 +28,9 @@ from pathlib import Path
 import yaml
 from PIL import Image
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.data.mapping import RESERVED  # noqa: E402  single source of truth
+
 ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "data" / "raw"
 PBC_DIR = RAW / "PBC_dataset_normal_DIB"
@@ -432,25 +435,65 @@ def audit_lisc():
 
 def audit_raabin():
     found = [c for c in RAABIN_CANDIDATES if (RAW / c).exists()]
+    if not found:
+        return {
+            "present": False,
+            "found_at": [],
+            "folders": {},
+            "note": "Not downloaded as of this run. Re-run this script once it is in "
+                    "data/raw/ under one of: " + ", ".join(RAABIN_CANDIDATES) + ".",
+        }
+
+    root = RAW / found[0]
+    log(f"Raabin: scanning {root.name}/ ...")
+    per_split = {}
+    for split in sorted(d for d in root.iterdir() if d.is_dir()):
+        classes, dims, formats, unreadable = {}, collections.Counter(), collections.Counter(), {}
+        for folder in sorted(d for d in split.iterdir() if d.is_dir()):
+            scanned = scan_folder(folder)
+            classes[folder.name] = len(scanned)
+            dims.update(str(r["dims"]) for r in scanned.values())
+            formats.update(str(r["format"]) for r in scanned.values())
+            unreadable.update({f"{folder.name}/{n}": r["error"]
+                               for n, r in scanned.items() if not r["readable"]})
+        per_split[split.name] = {
+            "images": sum(classes.values()),
+            "classes": classes,
+            "class_count": len(classes),
+            "formats": dict(formats),
+            "distinct_dims": len(dims),
+            "unreadable": unreadable,
+        }
+        log(f"  {split.name}: {per_split[split.name]['images']} in {len(classes)} classes")
+
     return {
-        "present": bool(found),
+        "present": True,
         "found_at": found,
-        "note": "Not downloaded as of this run; skipped by agreement. Re-run this script once it is "
-                "in data/raw/ under one of: " + ", ".join(RAABIN_CANDIDATES) + ".",
+        "folders": per_split,
+        "note": "Target domain. Class coverage per split is declared in "
+                "configs/class_mapping.yaml under target_splits; Test-B carries only "
+                "2 of the 5 classes and is reported as a two-class evaluation.",
     }
 
 
 # ----------------------------------------------------------------- mapping check
 
-def audit_mapping(mapping, pbc, rows, lisc):
+def audit_mapping(mapping, pbc, rows, lisc, raabin):
     log("mapping: validating against the data...")
     observed = {f"pbc:{folder}" for folder in pbc.get("folders", {})}
     for split_rows in rows.values():
         observed |= {f"wbcatt:{r['label']}" for r in split_rows}
     for folder in ("Train", "Test"):  # Train_Aug is excluded as a folder, not a class source
         observed |= {f"lisc:{c}" for c in lisc.get("folders", {}).get(folder, {}).get("classes", {})}
+    # Raabin's Train split is DANN-adaptation-only, but its class names still exist in
+    # the data and so must be mapped; validation is about names, not about use.
+    for split in raabin.get("folders", {}).values():
+        observed |= {f"raabin:{c}" for c in split.get("classes", {})}
 
-    classes = [k for k in mapping if k not in ("excluded", "excluded_files", "secondary_subsets")]
+    # Single source of truth, shared with the loader: a second hand-maintained copy of
+    # this list silently treated `target_splits` as a sixth class and reported its two
+    # keys as stale mapping entries.
+    classes = [k for k in mapping if k not in RESERVED]
     mapped = {}
     for cls in classes:
         for entry in mapping[cls]:
@@ -644,6 +687,16 @@ def build_report(s):
                       f"files absent from the json: {len(j['files_not_in_json'])}.", ""]
 
     L += ["## 6. Raabin-WBC (target domain)", "", raabin["note"], ""]
+    if raabin.get("folders"):
+        class_names = sorted({c for s in raabin["folders"].values() for c in s["classes"]})
+        L += [md_table(["split", "images", "classes"] + class_names + ["unreadable"],
+                       [[name, d["images"], d["class_count"]]
+                        + [d["classes"].get(c, "-") for c in class_names]
+                        + [len(d["unreadable"])]
+                        for name, d in raabin["folders"].items()]), "",
+              "Test-B covers only part of the label space, which is why "
+              "`configs/class_mapping.yaml` declares its class coverage and the eval "
+              "harness reports it separately.", ""]
 
     dis = band["disagreements"]
     claims = [
@@ -717,7 +770,7 @@ def main():
     band = audit_band_claim(rows, mapping, exclusions.pop("_dropped_names"))
     lisc = audit_lisc()
     raabin = audit_raabin()
-    validation = audit_mapping(mapping, pbc, rows, lisc)
+    validation = audit_mapping(mapping, pbc, rows, lisc, raabin)
 
     pbc.pop("_records", None)
     summary = {

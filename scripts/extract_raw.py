@@ -25,6 +25,10 @@ PBC_ZIP = (
     / "PBC_dataset_normal_DIB.zip"
 )
 LISC_RAR = RAW / "LISC.rar"
+# Raabin's three archives download into data/raw/raabin/ and extract beside each other
+# there. Download them from
+# https://dl.raabindata.com/Index%20of%20WBC%20Data/Index%20of%20WBC%20Cropped_double_labeled/
+RAABIN_DIR = RAW / "raabin"
 
 
 def find_rar_tool():
@@ -66,16 +70,23 @@ def unrar(archive, dest):
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
 
 
-def extract(archive, top_folder, unpack):
-    dest = RAW / top_folder
+def extract(archive, top_folder, unpack, parent=None):
+    """Extract `archive`, expecting it to contain a single folder named `top_folder`.
+
+    `parent` is where that folder lands; Raabin's three archives share one, so they end
+    up side by side under data/raw/raabin/ rather than loose in data/raw/.
+    """
+    parent = parent or RAW
+    dest = parent / top_folder
+    label = dest.relative_to(RAW).as_posix()
     if dest.exists():
-        print(f"skip  {top_folder}/ already exists")
+        print(f"skip  {label}/ already exists")
         return
     if not archive.exists():
         sys.exit(f"missing archive: {archive}")
-    tmp = RAW / f".extracting_{top_folder}"
+    tmp = parent / f".extracting_{top_folder}"
     shutil.rmtree(tmp, ignore_errors=True)
-    print(f"extract {archive.name} -> {top_folder}/")
+    print(f"extract {archive.name} -> {label}/")
     unpack(archive, tmp)
     (tmp / top_folder).rename(dest)
     shutil.rmtree(tmp)
@@ -84,6 +95,15 @@ def extract(archive, top_folder, unpack):
 def main():
     extract(PBC_ZIP, "PBC_dataset_normal_DIB", unzip_without_macosx)
     extract(LISC_RAR, "LISC", unrar)
+    # Raabin-WBC, double-labeled cropped release. Note TestB.zip unpacks to "Test-B"
+    # (hyphenated) while the other two match their archive names, and that the folder
+    # names are what configs/class_mapping.yaml keys target_splits on.
+    for archive, folder, unpack in (
+        (RAABIN_DIR / "Train.rar", "Train", unrar),
+        (RAABIN_DIR / "TestA.rar", "TestA", unrar),
+        (RAABIN_DIR / "TestB.zip", "Test-B", unzip_without_macosx),
+    ):
+        extract(archive, folder, unpack, parent=RAABIN_DIR)
 
 
 if __name__ == "__main__":
