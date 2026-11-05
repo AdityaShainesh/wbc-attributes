@@ -57,8 +57,11 @@ def build_dataset(config, labels=None, attributes=None, train=False):
 
     # With a cache the deterministic steps are already baked into the stored image, so
     # the live transform must not repeat them.
-    transform = (build_cached_transform(normalize, augment) if cached else
-                 build_train_transform(image_size, normalize, augment, stain) if train else
+    # HED jitter is augmentation, so it is tied to `augment` and can never reach an
+    # evaluation split, whatever the config says.
+    hed = config.get("hed_jitter") if augment else None
+    transform = (build_cached_transform(normalize, augment, hed) if cached else
+                 build_train_transform(image_size, normalize, augment, stain, hed) if train else
                  build_transform(image_size, normalize, stain))
 
     if name == "pbc":

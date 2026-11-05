@@ -1,0 +1,61 @@
+# Model 3 of 5: HED colour augmentation.
+#
+#   python -m src.train --config configs/model3_hed_jitter.yaml
+#
+# Identical to model1_direct_cnn except that each training image is decomposed into
+# Haematoxylin / Eosin / DAB channels and each channel is randomly scaled and shifted,
+# so the network sees many simulated staining protocols instead of only Barcelona's.
+# No target data is involved: the jitter is synthetic, which is what makes this a
+# domain-generalisation method rather than an adaptation one.
+#
+# This is the ONE model permitted colour augmentation. Models 1, 2 and 5 get geometric
+# augmentation only, deliberately: colour augmentation is itself a domain-generalisation
+# intervention, so if it were on everywhere, no difference in cross-lab drop could be
+# attributed to the method under test.
+#
+# Applied train-side only and after the resize. src/data/hed.py implements the HED round
+# trip in optical-density space rather than via skimage's rgb2hed/hed2rgb, which clamp
+# concentrations at zero and shift bright pixels by up to 135 levels even at sigma=0 --
+# that would have put a systematic train/eval difference into this arm.
+run_id: model3_hed_jitter
+seeds: [0, 1, 2]
+deterministic: true
+
+model:
+  kind: baseline_cnn
+  arch: resnet50
+  pretrained: true
+  num_classes: 5
+
+data:
+  dataset: pbc
+  split: train
+  image_size: 224           # fixed for the whole project; numbers at other sizes are not comparable
+                            # (the Phase II deck says ~360 px; 224 chosen 2026-11-05 to match
+                            #  ImageNet pretraining and the compute budget -- update the deck)
+  normalize: imagenet
+  augment: true             # geometric augmentation, as in every other model
+  hed_jitter:               # THE intervention under test in this arm; train split only
+    sigma: 0.05             # Tellez et al. (2018) use 0.05 as a moderate default
+  batch_size: 32
+  num_workers: 0
+
+train:
+  epochs: 30
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 0.01
+  # Plain cross-entropy. Neutrophils are 32% of train and basophils 12%, so class
+  # weighting is a reasonable thing to try -- but as its own run, not folded into the
+  # baseline, or the control arm is already an intervention.
+  selection:
+    dataset: pbc
+    split: val
+  early_stopping:
+    metric: macro_f1
+    patience: 5
+
+eval:
+  datasets:
+    - {dataset: pbc, split: val}
+    - {dataset: pbc, split: test}

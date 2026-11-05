@@ -71,7 +71,15 @@ def _stain_steps(stain):
     return [build_normalizer(stain["method"] if isinstance(stain, dict) else stain)]
 
 
-def build_train_transform(image_size=224, normalize="imagenet", augment=True, stain=None):
+def _hed_steps(hed_jitter):
+    """HED colour augmentation. Train only -- never reachable from build_transform."""
+    from src.data.hed import build_hed_jitter
+    jitter = build_hed_jitter(hed_jitter)
+    return [jitter] if jitter else []
+
+
+def build_train_transform(image_size=224, normalize="imagenet", augment=True, stain=None,
+                          hed_jitter=None):
     """Training transform: geometric augmentation only, deliberately no colour jitter.
 
     Blood cells have no canonical orientation, so flips and quarter turns are free
@@ -92,18 +100,21 @@ def build_train_transform(image_size=224, normalize="imagenet", augment=True, st
             transforms.RandomVerticalFlip(),
             RandomRot90(),
         ]
+        # After the resize, so the HED round trip runs on 224x224 rather than 360x363.
+        steps += _hed_steps(hed_jitter)
     steps += [transforms.ToTensor(), transforms.Normalize(mean, std)]
     return transforms.Compose(steps)
 
 
-def build_cached_transform(normalize="imagenet", augment=False):
+def build_cached_transform(normalize="imagenet", augment=False, hed_jitter=None):
     """For images already stain-normalised, padded and resized by the cache.
 
     Deliberately excludes PadToSquare and Resize: applying them twice would be a silent
     no-op today and a silent bug the moment the cache size and the run size diverge.
     """
     mean, std = _normalization(normalize)
-    steps = [transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip(), RandomRot90()] if augment else []
+    steps = ([transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip(), RandomRot90()]
+             + _hed_steps(hed_jitter)) if augment else []
     return transforms.Compose(steps + [transforms.ToTensor(), transforms.Normalize(mean, std)])
 
 
