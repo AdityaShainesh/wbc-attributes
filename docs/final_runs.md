@@ -261,12 +261,52 @@ count before and after rather than assuming.
 
 ## 5. The one-time Raabin evaluation
 
-Separate booking, after all nine training runs are complete and their checkpoints are
-backed up.
+A separate booking, after all nine training runs are complete and their checkpoints are
+off Kaggle. This is the whole target-domain budget for the project. Read §5.1 before
+booking the session.
 
-### 5.1 What one command does
+### 5.1 What has to be true before you start
 
-`eval.domains` in all three configs is:
+The checkpoints carry their config inside them, including **absolute paths resolved on
+the training machine**. `src/eval.py` reads that embedded config and never a YAML passed
+alongside it (CLAUDE.md §5), so the evaluation session has to look like the training
+session or nothing loads.
+
+| What the checkpoints record | What the session must provide |
+|---|---|
+| `/kaggle/working/coe/configs/class_mapping.yaml` | clone to **`/kaggle/working/coe`**, not any other directory |
+| `/kaggle/working/coe/configs/label_space.yaml` | same |
+| `/kaggle/input/datasets/anikakrishnaa/pbc-images/PBC_dataset_normal_DIB` | attach **pbc-images** |
+| `/kaggle/input/datasets/anikakrishnaa/wbcatt` | attach **wbcatt** |
+| `/kaggle/input/datasets/anikakrishnaa/raabin-double-labeled` | attach **raabin-double-labeled** |
+| `/kaggle/working/results` | written by the session itself |
+
+Plus **wbc-final-checkpoints**, the private dataset holding the nine `last.pt`. Kaggle
+nests it, so the real path has the folder name twice:
+
+```
+/kaggle/input/datasets/anikakrishnaa/wbc-final-checkpoints/wbc-final-checkpoints/<model>_seed<N>/last.pt
+```
+
+**Do not attach the old training notebook's output.** It contains a `results/` directory
+and a stale clone, and nothing in this session should be able to read either.
+
+Two failure modes this section is built around:
+
+- **A wrong clone directory fails loudly.** `ConfigError: data.class_mapping: not found`.
+  Annoying, not dangerous.
+- **A wrong dataset path used to fail silently.** `make_eval_loader` returned `None` for a
+  Raabin root that was not a directory, the run put all three Raabin domains in
+  `skipped_domains`, evaluated and ledgered `pbc_test` alone, and printed success — and
+  `pbc_test` is held out, so that look was spent for nothing. As of the commit that added
+  `_assert_domains_buildable`, any configured domain that cannot be built is a hard error
+  raised **before** the ledger is read or written and before any image is decoded.
+  `skipped_domains` is now always `{}`. The pre-flight cell below checks the same paths
+  anyway, because a clear message beats a stack trace.
+
+### 5.2 What one invocation does
+
+`eval.domains` is identical in all nine configs:
 
 ```yaml
 domains: [pbc_test, raabin_train, raabin_testA, raabin_testB]
@@ -274,76 +314,352 @@ domains: [pbc_test, raabin_train, raabin_testA, raabin_testB]
 
 So **one** `src.eval` invocation on **one** checkpoint evaluates the held-out source test
 split and all three Raabin domains, and writes **four** ledger lines. Nine checkpoints ×
-four domains = **36 ledger lines**, and that is the whole target-domain budget for the
-project.
+four domains = **36 ledger lines**.
 
 `pbc_test` is ledgered too. It is held out for the source-domain report, so a repeat look
 at it is the same error as a repeat look at Raabin.
 
-### 5.2 The command
+Each invocation also writes one record, to the `results_dir` in its **embedded** config —
+there is no flag for this:
 
-One cell per checkpoint, nine cells. No flags:
-
-```bash
-!cd /kaggle/working/<repo> && python -m src.eval \
-    --checkpoint /kaggle/working/results/baseline_seed0/last.pt
+```
+/kaggle/working/results/<run_id>_seed<N>_eval.json          a real evaluation
+/kaggle/working/results/<run_id>_seed<N>_eval_dryrun.json   --dry-run
 ```
 
-`last.pt`, never `best.pt`. `best.pt` is the `pbc_val` peak the final-epoch rule
-discarded; `src/eval.py` refuses it outright (`3b00627`) unless you pass
-`--override-reason`, and there is no good reason to pass one here.
+`run_id` is `baseline`, `bottleneck` or `control`, so the nine records are
+`baseline_seed0_eval.json` … `control_seed2_eval.json`, all in one flat directory. A dry
+run cannot clobber a real record: the names differ.
 
-Each cell prints macro-F1 and ECE per domain per attribute mode, the class list each
-macro-F1 was computed over, whether the model's buffers changed during evaluation (they
-must not), and the path of the record it wrote. The abstention threshold comes from
-`pbc_val` and is applied unchanged to every domain.
+**These records are the only copy of the numbers.** The ledger records only that a look
+happened, not what it said.
 
-**Download the nine `*_eval.json` files along with the ledger.** They are the only copy
-of the numbers; the ledger records only that the look happened.
+One consequence worth knowing before you try: these checkpoints can no longer be
+evaluated on your laptop at all, not even with `--dry-run`. `results_dir` is embedded as
+`/kaggle/working/results`, and creating that locally fails with
+`OSError: [Errno 30] Read-only file system: '/kaggle'`. Evaluation of a Kaggle-trained
+checkpoint happens on Kaggle.
 
-### 5.3 Ledger rules for this section
+### 5.3 The notebook
 
-- **Three seeds are three legitimate entries per domain**, because the ledger keys on the
-  checkpoint hash and three seeds are three different checkpoints. No override needed.
-- **A second evaluation of the same (checkpoint, domain) is refused.** That is the point.
-  If a cell fails *after* writing its ledger lines, re-running it needs
-  `--override-reason "<text>"`, and that reason goes into the ledger and into git history
-  where a reader will see it.
-- **Retraining produces a new hash**, so a re-run of a training job is a new checkpoint
-  and a legitimate new entry — which is also why you should not retrain casually after
-  looking at Raabin.
-- **A legitimate override reason is a mechanical failure**, not a number you did not like.
-  "Session died after raabin_testA, re-running for testB" is a reason. "Checking whether
-  the gap looks better" is the thing the ledger exists to make visible.
-- **Download and commit the ledger before closing the session** (4.3). If the session
-  dies with lines written and not downloaded, the next run will refuse the pairs it
-  already recorded and you will have no record of what they said.
+Accelerator on. Internet on (for the clone). Save & Run All is not used here — run the
+cells in order and stop if one fails.
 
-### 5.4 Immediately after
+#### Cell 1 — clone, check, CUDA
+
+```python
+import subprocess, sys, importlib
+from pathlib import Path
+
+REPO = Path("/kaggle/working/coe")
+!rm -rf /kaggle/working/coe
+!git clone -q https://github.com/niks2604/coe.git /kaggle/working/coe
+
+print("HEAD:  ", subprocess.run(["git","-C",str(REPO),"rev-parse","--short","HEAD"],
+                                capture_output=True, text=True).stdout.strip())
+dirty = subprocess.run(["git","-C",str(REPO),"status","--porcelain"],
+                       capture_output=True, text=True).stdout
+print("dirty: ", repr(dirty) if dirty else "clean")
+
+ledger = REPO / "target_eval_ledger.jsonl"
+n = len(ledger.read_text().splitlines()) if ledger.is_file() else 0
+print(f"ledger lines in the clone: {n}   (expect 0 before the first session, or "
+      f"exactly what you have pushed)")
+
+# NO `pip install -r requirements.txt`. It pins torch==2.7.0 and would replace Kaggle's
+# 2.11.0+cu130 - the build these checkpoints were trained under. Install by name only
+# what is actually missing.
+MODULES = {"torch": "torch", "torchvision": "torchvision", "numpy": "numpy",
+           "yaml": "PyYAML", "PIL": "pillow", "pandas": "pandas"}
+missing = [pkg for mod, pkg in MODULES.items()
+           if not importlib.util.find_spec(mod)]
+if missing:
+    print("installing:", missing)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *missing], check=True)
+else:
+    print("all imports present; nothing installed")
+
+import torch
+assert torch.cuda.is_available(), "no GPU: set Accelerator before running"
+print(torch.__version__, torch.cuda.get_device_name(0))
+```
+
+#### Cell 2 — pre-flight: every path the checkpoints need
+
+Reads one checkpoint's embedded config and asserts that everything it names exists. The
+three Raabin split folders are checked **by existence only** — no file is opened, nothing
+is counted, nothing derived from any pixel (CLAUDE.md §3).
+
+```python
+import os, sys, torch
+from pathlib import Path
+
+REPO = Path("/kaggle/working/coe")
+CKPT_ROOT = Path("/kaggle/input/datasets/anikakrishnaa/wbc-final-checkpoints"
+                 "/wbc-final-checkpoints")          # the folder name appears twice
+os.chdir(REPO); sys.path.insert(0, str(REPO))
+
+MODELS = ("baseline", "bottleneck", "control")
+RUNS = [(m, s) for s in (0, 1, 2) for m in MODELS]   # seed-major
+CKPTS = {(m, s): CKPT_ROOT / f"{m}_seed{s}" / "last.pt" for m, s in RUNS}
+
+absent = [str(p) for p in CKPTS.values() if not p.is_file()]
+assert not absent, "checkpoints not found:\n" + "\n".join(absent)
+print(f"{len(CKPTS)} checkpoints present under {CKPT_ROOT}")
+
+payload = torch.load(CKPTS[("baseline", 0)], map_location="cpu", weights_only=False)
+cfg = payload["config"]
+problems = []
+
+def check(label, path, is_dir):
+    ok = Path(path).is_dir() if is_dir else Path(path).is_file()
+    print(f"  {label:<28} {'OK     ' if ok else 'MISSING'} {path}")
+    if not ok:
+        problems.append(f"{label}={path}")
+
+print("\nembedded repo paths:")
+check("data.class_mapping_path", cfg["data"]["class_mapping_path"], False)
+check("data.label_space_path",   cfg["data"]["label_space_path"],   False)
+
+print("\nembedded dataset paths:")
+for key in ("pbc_images", "wbcatt_dir", "raabin_root"):
+    check(f"paths.{key}", cfg["paths"][key], True)
+print(f"  {'paths.results_dir':<28} (written by this session) "
+      f"{cfg['paths']['results_dir']}")
+print(f"  {'paths.lisc_root':<28} not checked: LISC is out of scope (CLAUDE.md §2)")
+
+print("\nRaabin split folders (existence only; nothing opened or counted):")
+from src.data.domains import target_folder
+raabin = Path(cfg["paths"]["raabin_root"])
+for did in ("raabin_train", "raabin_testA", "raabin_testB"):
+    check(did, raabin / target_folder(did), True)
+
+print("\nconfigured eval.domains:", cfg["eval"]["domains"])
+assert not problems, (
+    "STOP. Fix these before evaluating - the embedded config is not editable here:\n  "
+    + "\n  ".join(problems))
+print("\nall required paths present")
+del payload
+```
+
+#### Cell 3 — checksums against the table
+
+`src.ledger.checkpoint_hash` is a **plain SHA-256 of the file's bytes**, read in 1 MiB
+chunks with no salt, prefix or length framing. It equals `shasum -a 256 <file>`, and the
+cell proves that on one file rather than asserting it.
+
+```python
+import hashlib
+from src.ledger import checkpoint_hash
+
+EXPECTED = {
+    ("baseline", 0): "79de1c4cb406", ("bottleneck", 0): "6c539cd6f1b9",
+    ("control", 0):  "b70993fb5398", ("baseline", 1):   "40e06e74d209",
+    ("bottleneck", 1): "b1abb3d45446", ("control", 1):  "e945cccf74ae",
+    ("baseline", 2): "d8341cba0adc", ("bottleneck", 2): "3275a3b3a5c8",
+    ("control", 2):  "17a7f81eb176",
+}
+
+probe = CKPTS[("baseline", 0)]
+plain = hashlib.sha256(probe.read_bytes()).hexdigest()
+assert checkpoint_hash(probe) == plain, "checkpoint_hash is not a plain sha256"
+print(f"checkpoint_hash == plain sha256 of the bytes: {plain[:12]}\n")
+
+bad = []
+for (m, s) in RUNS:
+    h = checkpoint_hash(CKPTS[(m, s)])
+    ok = h.startswith(EXPECTED[(m, s)])
+    print(f"  {m+'_seed'+str(s):<20} {h[:12]}  {'OK' if ok else 'MISMATCH, expected '
+          + EXPECTED[(m, s)]}")
+    if not ok:
+        bad.append(f"{m}_seed{s}")
+assert not bad, f"STOP. These are not the checkpoints that were uploaded: {bad}"
+print("\nall nine match the table")
+```
+
+#### Cell 4 — dry run of ONE checkpoint
+
+`pbc_val` only. No ledger line, no target domain, nothing spent. It proves the whole
+path — a read-only mount, the embedded config, the model, the record write — and then
+prints the record's keys, so every key the verification cell uses is checked against
+reality before the real run.
+
+```python
+!cd /kaggle/working/coe && python -m src.eval \
+    --checkpoint "/kaggle/input/datasets/anikakrishnaa/wbc-final-checkpoints/wbc-final-checkpoints/baseline_seed0/last.pt" \
+    --dry-run
+```
+
+```python
+import json
+rec = json.loads(Path("/kaggle/working/results/baseline_seed0_eval_dryrun.json").read_text())
+print("record keys:", sorted(rec))
+for k in ("run_id", "seed", "dry_run", "domains", "skipped_domains", "selection_role",
+          "selection_rule", "checkpoint_sha256", "buffer_sha256_before",
+          "buffer_sha256_after", "attribute_modes"):
+    assert k in rec, f"the verification cell expects {k!r} and it is not there"
+    print(f"  {k:<22} {rec[k] if k != 'checkpoint_sha256' else rec[k][:12]}")
+print("\nresults keys per domain:", {d: sorted(v) for d, v in rec["results"].items()})
+print("score keys:", sorted(next(iter(next(iter(rec['results'].values())).values()))))
+```
+
+If anything here fails, **stop**. Nothing below has been spent yet.
+
+#### Cells 5–13 — the nine evaluations
+
+One cell each, seed-major, so a session that dies after three cells leaves a complete
+three-model comparison at seed 0 rather than three baselines. No flags. `last.pt`, never
+`best.pt` — `src/eval.py` refuses a non-headline checkpoint outright.
+
+```python
+D = "/kaggle/input/datasets/anikakrishnaa/wbc-final-checkpoints/wbc-final-checkpoints"
+```
+
+```python
+!cd /kaggle/working/coe && python -m src.eval --checkpoint "$D/baseline_seed0/last.pt"
+```
+
+Then one cell each, in this order:
+
+```
+baseline_seed0   bottleneck_seed0   control_seed0
+baseline_seed1   bottleneck_seed1   control_seed1
+baseline_seed2   bottleneck_seed2   control_seed2
+```
+
+Each prints the record path, macro-F1 and ECE per domain per attribute mode, the class
+list each macro-F1 was computed over, and whether the model's buffers changed during
+evaluation (they must not). The abstention threshold comes from `pbc_val` and is applied
+unchanged to every domain.
+
+If a cell fails *before* its ledger lines are written, re-run it. If it fails *after*,
+re-running needs `--override-reason` (§5.6).
+
+#### Cell 14 — verification
+
+```python
+import json, collections
+from pathlib import Path
+
+RESULTS = Path("/kaggle/working/results")
+records = sorted(RESULTS.glob("*_seed*_eval.json"))     # excludes *_eval_dryrun.json
+assert len(records) == 9, f"expected 9 records, found {len(records)}: {records}"
+
+bad, seen = [], set()
+for f in records:
+    r = json.loads(f.read_text())
+    tag = f"{r['run_id']}_seed{r['seed']}"
+    if (r["run_id"], r["seed"]) in seen: bad.append(f"{tag}: duplicate")
+    seen.add((r["run_id"], r["seed"]))
+    if r["dry_run"]:                     bad.append(f"{tag}: dry run")
+    if r["skipped_domains"]:             bad.append(f"{tag}: SKIPPED {r['skipped_domains']}")
+    if sorted(r["domains"]) != ["pbc_test","raabin_testA","raabin_testB","raabin_train"]:
+        bad.append(f"{tag}: domains={r['domains']}")
+    if r["selection_role"] != "headline": bad.append(f"{tag}: role={r['selection_role']}")
+    if r["selection_rule"] != "final_epoch": bad.append(f"{tag}: rule={r['selection_rule']}")
+    if r["override_reason"]:             bad.append(f"{tag}: override {r['override_reason']!r}")
+    if r["buffer_sha256_before"] != r["buffer_sha256_after"]:
+        bad.append(f"{tag}: BUFFERS CHANGED during evaluation")
+    print(f"{tag:<20} {len(r['domains'])} domains  modes={r['attribute_modes']}  "
+          f"pbc_test soft macro-F1 {r['results']['pbc_test']['soft']['macro_f1']:.4f}")
+
+rows = [json.loads(l) for l in (Path("/kaggle/working/coe/target_eval_ledger.jsonl")
+                                ).read_text().splitlines() if l.strip()]
+per_domain = collections.Counter(r["domain"] for r in rows)
+print("\nledger:", dict(per_domain), " total", len(rows))
+print("roles:", collections.Counter(r.get("selection_role") for r in rows))
+print("overrides:", [r.get("override_reason") for r in rows if r.get("override_reason")])
+
+if len(rows) != 36:                      bad.append(f"ledger has {len(rows)} lines, expected 36")
+if set(per_domain.values()) != {9}:      bad.append(f"not 9 per domain: {dict(per_domain)}")
+assert not bad, "\n".join(bad)
+print("\nall nine records and 36 ledger lines verified")
+```
+
+#### Cell 15 — collect
+
+```python
+!mkdir -p /kaggle/working/outputs
+!cp /kaggle/working/coe/target_eval_ledger.jsonl /kaggle/working/outputs/
+!cp /kaggle/working/results/*_eval.json /kaggle/working/outputs/
+!cp /kaggle/working/results/*_eval_dryrun.json /kaggle/working/outputs/ 2>/dev/null || true
+!ls -la /kaggle/working/outputs
+print("\nDownload /kaggle/working/outputs, then STOP THE GPU SESSION.")
+```
+
+**Stop the session.** Kaggle bills the accelerator until you do, and a session left
+running is a session someone can re-run a cell in.
+
+### 5.4 The ledger does not persist, so you have to carry it
+
+The clone's `target_eval_ledger.jsonl` starts at whatever is in git and dies with the
+session. Nothing on Kaggle remembers it. So, **after every session, before booking
+another**:
 
 ```bash
-# on your machine
-sort -u target_eval_ledger.jsonl | wc -l     # expect 36 after a complete pass
+# on your machine, in the repo
+cat ~/Downloads/outputs/target_eval_ledger.jsonl >> target_eval_ledger.jsonl   # APPEND
+sort -u target_eval_ledger.jsonl | wc -l        # expect 36 after a complete pass
 python -c "
-import json,collections
-rows=[json.loads(l) for l in open('target_eval_ledger.jsonl')]
+import json, collections
+rows=[json.loads(l) for l in open('target_eval_ledger.jsonl') if l.strip()]
 print(collections.Counter(r['domain'] for r in rows))
-print('overrides:', [r.get('override_reason') for r in rows if r.get('override_reason')])
 print('roles:', collections.Counter(r.get('selection_role') for r in rows))
+print('overrides:', [r.get('override_reason') for r in rows if r.get('override_reason')])
 "
 git add target_eval_ledger.jsonl && git commit -m "ledger: Raabin evaluation, 9 checkpoints x 4 domains" && git push
 ```
 
-Expect 9 per domain, no overrides, and `selection_role` `headline` on all 36. Anything
-else needs explaining in the write-up.
+Append, never overwrite — the local file is the authoritative one. **Push before the next
+session**, because the next session's clone starts from the pushed ledger, and a clone
+that has forgotten an earlier look will cheerfully repeat it.
 
-### 5.5 Reminders
+### 5.5 Where the records go
+
+They are written to `/kaggle/working/results/`, and `results/` is gitignored, so **the
+nine records are not tracked by git unless you move them**. Losing them loses the numbers;
+the ledger does not hold them.
+
+**Proposed:** a new committed directory `eval_records/` at the repo root.
+
+```bash
+mkdir -p eval_records
+cp ~/Downloads/outputs/*_eval.json eval_records/
+git add eval_records/ && git commit -m "results: the nine Raabin evaluation records"
+```
+
+The justification is the ledger's own, from CLAUDE.md §5: a record that resets when
+`results/` is cleared does not constrain anything. Nine JSON files, each an embedded
+resolved config plus metrics, well under 2 MB in total, and `scripts/aggregate_eval.py`
+reads exactly this directory. Adopting it means a one-line change to the CLAUDE.md §5
+paragraph that currently names **two** things committed despite `results/` being
+gitignored — a protocol-document edit, so it waits for your approval rather than
+happening as a side effect.
+
+### 5.6 Ledger rules for this section
+
+- **Three seeds are three legitimate entries per domain.** The ledger keys on the
+  checkpoint hash and three seeds are three different checkpoints. No override needed.
+- **A second evaluation of the same (checkpoint, domain) is refused.** That is the point.
+- **Retraining produces a new hash**, so a re-run of a training job is a new checkpoint and
+  a legitimate new entry — which is also why you do not retrain casually after looking at
+  Raabin.
+- **A legitimate override reason is a mechanical failure**, not a number you did not like.
+  "Session died after `raabin_testA`, re-running for `testB`" is a reason. "Checking
+  whether the gap looks better" is the thing the ledger exists to make visible.
+- **An override also replaces the record file**, not just the ledger line. If both looks
+  matter, move the old `*_eval.json` aside first.
+- `--override-reason` with nothing to override is itself an error, so it cannot be left on
+  out of habit.
+
+### 5.7 Reminders
 
 - Stop the GPU session when the last cell finishes.
 - Raabin's basophils come from a single leukemia patient. Any basophil recall on a Raabin
   domain carries that caveat and is one patient's cells, not a sample of basophils
   (CLAUDE.md §6).
 - `raabin_testB` holds two of the five classes, so it reports a 2-class macro-F1 and the
-  source side of its gap is `pbc_test` restricted to those two classes. Per-class recall
-  is `null`, not 0, for a class absent from an eval set.
-- There is no pooled Raabin number. Three domains, three results.
+  source side of its gap is `pbc_test` restricted to those two classes. Predictions are
+  still an argmax over all five. Per-class recall is `null`, not 0, for a class absent from
+  an eval set.
+- There is no pooled Raabin number. Three domains, three rows.
