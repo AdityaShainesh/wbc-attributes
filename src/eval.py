@@ -28,7 +28,7 @@ from src.config import Config, load_config, resolve_device, run_metadata
 from src.data.datasets import build_secondary_subset
 from src.data.domains import Domain, domain_of, load_class_mapping
 from src.data.label_space import load_label_space
-from src.data.loaders import make_eval_loader
+from src.data.loaders import eval_loader_unavailable, make_eval_loader
 from src.ledger import (
     LEDGER_PATH,
     LedgerError,
@@ -284,6 +284,37 @@ def _score(cfg, predictions: dict, classes: list[str], thresholds) -> dict:
 
 # --- the script --------------------------------------------------------------------------
 
+def _assert_domains_buildable(cfg, domains: list[str]) -> None:
+    """Every configured domain must yield a loader, or nothing happens at all.
+
+    make_eval_loader returns None for a domain whose data is not on disk, and this used
+    to become skipped_domains: the run evaluated whatever it could, ledgered it, and
+    reported success. On the one-time Raabin evaluation that is the worst available
+    behaviour. A target dataset attached at a path other than the one baked into the
+    checkpoint would evaluate and ledger pbc_test alone and skip all three Raabin
+    domains - and pbc_test is held out (CLAUDE.md sec 5), so that look is spent and
+    cannot be retaken without an override.
+
+    Raised before the ledger is read or written and before any image is decoded, so a
+    misconfigured run costs nothing. A configured domain that cannot be built is a
+    configuration error, which is why this is fatal rather than a warning.
+    """
+    unavailable = {domain: reason for domain in domains
+                   if (reason := eval_loader_unavailable(cfg, domain)) is not None}
+    if not unavailable:
+        return
+    listed = "\n".join(f"  {domain}: {reason}" for domain, reason in unavailable.items())
+    raise EvalError(
+        f"{len(unavailable)} of the {len(domains)} domains in this checkpoint's "
+        f"eval.domains cannot be built:\n{listed}\n"
+        f"Nothing was evaluated and no ledger line was written. Either attach the data "
+        f"at the path the checkpoint records, or remove the domain from eval.domains "
+        f"and retrain - the config is embedded in the checkpoint and is not editable "
+        f"here. Evaluating the rest would spend the held-out pbc_test look for a "
+        f"partial result."
+    )
+
+
 def evaluate_checkpoint(checkpoint: str | Path, ledger_path: str | Path = LEDGER_PATH,
                         dry_run: bool = False, override_reason: str | None = None) -> dict:
     started = time.time()
@@ -304,6 +335,7 @@ def evaluate_checkpoint(checkpoint: str | Path, ledger_path: str | Path = LEDGER
 
     # pbc_val only, no ledger: the tuning split is read constantly by design.
     domains = [DRY_RUN_DOMAIN] if dry_run else list(cfg.eval.domains)
+    _assert_domains_buildable(cfg, domains)
 
     sha = checkpoint_hash(checkpoint)
     if not dry_run:
@@ -346,9 +378,8 @@ def evaluate_checkpoint(checkpoint: str | Path, ledger_path: str | Path = LEDGER
             collected = val
         else:
             loader = make_eval_loader(cfg, domain, mapping, label_space)
-            if loader is None:
-                skipped[domain] = "not present on disk"
-                continue
+            if loader is None:                      # unreachable: pre-flight checked
+                raise EvalError(f"{domain} became unbuildable mid-run")
             collected = _collect(model, loader, modes, observed, device)
 
         results[domain] = {mode: _score(cfg, collected["modes"][mode], classes,

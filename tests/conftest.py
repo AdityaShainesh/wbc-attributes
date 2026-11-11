@@ -262,7 +262,9 @@ def experiment_dict(raw: Path, mapping: Path, **overrides) -> dict:
         "selection": {"rule": "final_epoch", "report_metric": "val_macro_f1",
                       "divergence_guard": "non_finite_loss"},
         "eval": {
-            "domains": ["pbc_test", "raabin_train", "raabin_testA", "raabin_testB", "lisc"],
+            # No lisc: it has no loader, and a configured domain that cannot be built
+            # is now refused outright rather than skipped (see test_eval_domains.py).
+            "domains": ["pbc_test", "raabin_train", "raabin_testA", "raabin_testB"],
             "attribute_modes": ["soft", "hard"],
             "secondary_subsets": ["pbc_test_no_band_neutrophils"],
             "abstention": {"threshold_split": "pbc_val", "coverage_grid": [0.5, 0.7, 0.9, 1.0]},

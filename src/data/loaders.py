@@ -181,30 +181,51 @@ def make_val_loader(cfg, mapping: ClassMapping, label_space: LabelSpace,
                       collate_fn=_collate, pin_memory=_pin_memory(cfg))
 
 
+def eval_loader_unavailable(cfg, dataset_id: str) -> str | None:
+    """Why make_eval_loader would build nothing for this domain, or None if it would.
+
+    The single source of truth for "can this domain be evaluated", shared with
+    src.eval's pre-flight check. Two copies of this logic would drift, and the drift
+    would be a domain that passes the check and then yields no loader - which is the
+    silent skip the check exists to make impossible.
+
+    Checks a directory's existence and nothing else. No file is opened and nothing is
+    counted, so it derives nothing from target pixels (CLAUDE.md sec 3).
+    """
+    if dataset_id not in DATASETS:
+        raise ValueError(f"unknown dataset id {dataset_id!r}; known: {sorted(DATASETS)}")
+    if domain_of(dataset_id) is Domain.SOURCE:
+        return None
+    corpus = DATASETS[dataset_id].corpus
+    if corpus != "raabin":
+        # LISC was never obtained and is out of scope (CLAUDE.md sec 2); no loader
+        # exists for it. Any future target gets its own dataset class here.
+        return (f"no loader exists for corpus {corpus!r}: LISC was never obtained and "
+                f"is out of scope (CLAUDE.md sec 2)")
+    root = cfg.paths.raabin_root
+    if not root.is_dir():
+        return f"paths.raabin_root is not a directory: {root}"
+    return None
+
+
 def make_eval_loader(cfg, dataset_id: str, mapping: ClassMapping,
                      label_space: LabelSpace) -> DataLoader | None:
     """The only path to target data, and the same path used for pbc_test.
 
     Never shuffles, never augments, and never applies subset_n_images - shrinking a
-    target domain would change what the reported gap is measured over. Returns None if
-    the dataset is not on disk, so an absent domain is skipped rather than fatal.
+    target domain would change what the reported gap is measured over. Returns None
+    when eval_loader_unavailable gives a reason; callers that have configured the
+    domain must treat that as an error rather than a skip, and src.eval does.
     """
-    if dataset_id not in DATASETS:
-        raise ValueError(f"unknown dataset id {dataset_id!r}; known: {sorted(DATASETS)}")
+    if eval_loader_unavailable(cfg, dataset_id) is not None:
+        return None
     transform = build_eval_transform(cfg)
 
     if domain_of(dataset_id) is Domain.SOURCE:
         dataset = _build_source(cfg, dataset_id, mapping, label_space, transform,
                                 subset=False)
     else:
-        corpus = DATASETS[dataset_id].corpus
-        if corpus != "raabin":
-            # LISC was never obtained and is out of scope (CLAUDE.md sec 2); no loader
-            # exists for it. Any future target gets its own dataset class here.
-            return None
         root = cfg.paths.raabin_root
-        if not root.is_dir():
-            return None
         dataset = RaabinFolderDataset(
             dataset_id=dataset_id, root=root, mapping=mapping,
             label_space=label_space, image_size=cfg.data.image_size,
