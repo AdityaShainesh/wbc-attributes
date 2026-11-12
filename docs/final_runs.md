@@ -502,9 +502,12 @@ rec = json.loads(Path("/kaggle/working/results/baseline_seed0_eval_dryrun.json")
 print("record keys:", sorted(rec))
 for k in ("run_id", "seed", "dry_run", "domains", "skipped_domains", "selection_role",
           "selection_rule", "override_reason", "checkpoint_sha256",
-          "buffer_sha256_before", "buffer_sha256_after", "attribute_modes"):
+          "buffer_sha256_before", "buffer_sha256_after", "attribute_modes",
+          "gaps", "secondary_gaps"):
     assert k in rec, f"the verification cell expects {k!r} and it is not there"
     print(f"  {k:<22} {rec[k] if k != 'checkpoint_sha256' else rec[k][:12]}")
+# gaps and secondary_gaps are empty on a dry run - it reads pbc_val only, so there is
+# no target domain and no source test split to difference. The real runs fill them.
 print("\nresults keys per domain:", {d: sorted(v) for d, v in rec["results"].items()})
 print("score keys:", sorted(next(iter(next(iter(rec['results'].values())).values()))))
 ```
@@ -569,6 +572,15 @@ for f in records:
     if r["override_reason"]:             bad.append(f"{tag}: override {r['override_reason']!r}")
     if r["buffer_sha256_before"] != r["buffer_sha256_after"]:
         bad.append(f"{tag}: BUFFERS CHANGED during evaluation")
+    # The aggregator needs both gap blocks; an empty one here is a silent hole in the
+    # result, not a cosmetic omission.
+    if sorted(r["gaps"]) != ["raabin_testA", "raabin_testB", "raabin_train"]:
+        bad.append(f"{tag}: gaps={sorted(r['gaps'])}")
+    if sorted(r["secondary_gaps"]) != ["pbc_test_no_band_neutrophils"]:
+        bad.append(f"{tag}: secondary_gaps={sorted(r['secondary_gaps'])}")
+    for sub, per_domain in r["secondary_gaps"].items():
+        if sorted(per_domain) != ["raabin_testA", "raabin_testB", "raabin_train"]:
+            bad.append(f"{tag}: secondary_gaps[{sub}]={sorted(per_domain)}")
     print(f"{tag:<20} {len(r['domains'])} domains  modes={r['attribute_modes']}  "
           f"pbc_test soft macro-F1 {r['results']['pbc_test']['soft']['macro_f1']:.4f}")
 
