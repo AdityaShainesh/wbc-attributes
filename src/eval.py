@@ -284,6 +284,40 @@ def _score(cfg, predictions: dict, classes: list[str], thresholds) -> dict:
 
 # --- the script --------------------------------------------------------------------------
 
+def _gaps_against(source_raw: dict, source_name: str, raw: dict,
+                  evaluated: list[str], modes: list[str], classes: list[str],
+                  cfg) -> dict:
+    """source minus target macro-F1 per target domain, per mode, with a bootstrap CI.
+
+    The source side is restricted to the classes present in that target domain, by true
+    label, and the restriction is named in the output: a 5-class source number minus a
+    2-class target number is not a difference (CLAUDE.md sec 6). Predictions are left
+    alone - an argmax over all five classes on both sides - so the restriction changes
+    which images are counted and never which classes the model may predict.
+
+    One helper for the primary gap and the secondary one so they cannot drift apart.
+    Both use cfg.seed for the bootstrap, so their intervals are correlated; they are
+    read as two views of one evaluation, not as independent measurements.
+    """
+    out: dict[str, dict] = {}
+    for domain in evaluated:
+        if domain_of(domain) is not Domain.TARGET:
+            continue
+        out[domain] = {"source_domain": source_name, "modes": {}}
+        for mode in modes:
+            target = raw[domain][mode]
+            keep = present_classes(target["y_true"], classes)
+            source_true, source_pred, kept = restrict_to_classes(
+                source_raw[mode]["y_true"], source_raw[mode]["y_pred"], keep, classes)
+            out[domain]["source_classes"] = kept
+            out[domain]["modes"][mode] = gap_with_ci(
+                (source_true, source_pred), (target["y_true"], target["y_pred"]),
+                lambda t, p: macro_f1_present(t, p, classes)[0],
+                n=cfg.bootstrap.n, ci=cfg.bootstrap.ci, seed=cfg.seed,
+                stratify_by=cfg.bootstrap.stratify_by)
+    return out
+
+
 def _assert_domains_buildable(cfg, domains: list[str]) -> None:
     """Every configured domain must yield a loader, or nothing happens at all.
 
@@ -394,19 +428,27 @@ def evaluate_checkpoint(checkpoint: str | Path, ledger_path: str | Path = LEDGER
 
     # Secondary subsets, source only, defined in the class mapping.
     secondary: dict[str, dict] = {}
+    # The subset's own predictions, kept so the secondary gap is differenced from the
+    # same rows the subset was scored on rather than from a second filtering pass.
+    secondary_raw: dict[str, dict] = {}
     if not dry_run and SOURCE_TEST in evaluated:
         source_loader = make_eval_loader(cfg, SOURCE_TEST, mapping, label_space)
         for name in cfg.eval.secondary_subsets:
             view = build_secondary_subset(source_loader.dataset, mapping, name)
             keep = set(view.indices)
+            secondary_raw[name] = {
+                mode: {
+                    k: [v for i, v in enumerate(raw[SOURCE_TEST][mode][k])
+                        if source_loader.dataset.indices[i] in keep]
+                    for k in ("y_true", "y_pred", "confidence")
+                }
+                for mode in modes
+            }
             secondary[name] = {
                 "n": len(view),
                 "modes": {
-                    mode: _score(cfg, {
-                        k: [v for i, v in enumerate(raw[SOURCE_TEST][mode][k])
-                            if source_loader.dataset.indices[i] in keep]
-                        for k in ("y_true", "y_pred", "confidence")
-                    }, classes, thresholds[mode])
+                    mode: _score(cfg, secondary_raw[name][mode], classes,
+                                 thresholds[mode])
                     for mode in modes
                 },
             }
@@ -414,23 +456,18 @@ def evaluate_checkpoint(checkpoint: str | Path, ledger_path: str | Path = LEDGER
     # Gaps. The source side is restricted to the classes present in each target domain,
     # by true label, with the restriction named (CLAUDE.md sec 6).
     gaps: dict[str, dict] = {}
+    secondary_gaps: dict[str, dict] = {}
     if SOURCE_TEST in evaluated:
-        for domain in evaluated:
-            if domain_of(domain) is not Domain.TARGET:
-                continue
-            gaps[domain] = {"source_domain": SOURCE_TEST, "modes": {}}
-            for mode in modes:
-                target = raw[domain][mode]
-                keep = present_classes(target["y_true"], classes)
-                source_true, source_pred, kept = restrict_to_classes(
-                    raw[SOURCE_TEST][mode]["y_true"], raw[SOURCE_TEST][mode]["y_pred"],
-                    keep, classes)
-                gaps[domain]["source_classes"] = kept
-                gaps[domain]["modes"][mode] = gap_with_ci(
-                    (source_true, source_pred), (target["y_true"], target["y_pred"]),
-                    lambda t, p: macro_f1_present(t, p, classes)[0],
-                    n=cfg.bootstrap.n, ci=cfg.bootstrap.ci, seed=cfg.seed,
-                    stratify_by=cfg.bootstrap.stratify_by)
+        gaps = _gaps_against(raw[SOURCE_TEST], SOURCE_TEST, raw, evaluated, modes,
+                             classes, cfg)
+        # The like-for-like secondary gap (CLAUDE.md sec 6), computed here because the
+        # record carries no per-image predictions and so nothing downstream could
+        # reconstruct it. Same helper as the primary gap, so the two differ in their
+        # source side and in nothing else.
+        secondary_gaps = {
+            name: _gaps_against(filtered, name, raw, evaluated, modes, classes, cfg)
+            for name, filtered in secondary_raw.items()
+        }
 
     after = _buffer_hash(model)
     meta = run_metadata(device=cfg.device)
@@ -454,6 +491,7 @@ def evaluate_checkpoint(checkpoint: str | Path, ledger_path: str | Path = LEDGER
         "secondary_subsets": secondary,
         "per_attribute": per_attribute,
         "gaps": gaps,
+        "secondary_gaps": secondary_gaps,
         "abstention_thresholds": {m: t for m, t in thresholds.items()},
         "buffer_sha256_before": before,
         "buffer_sha256_after": after,
