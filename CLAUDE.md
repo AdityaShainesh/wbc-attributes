@@ -179,6 +179,53 @@ Bootstrap: n=2000, 95% CI, stratified by class. Source and target are resampled 
 
 Raabin's basophils come from a single leukemia patient. Any basophil recall on a Raabin domain carries that caveat and must be reported with it — it is one patient's cells, not a sample of basophils.
 
+Primary comparison. Declared in full before any Raabin evaluation had been run: the ledger was empty and no target-domain number existed when this was written. It fixes what the result is, so that reading the numbers cannot become choosing the comparison.
+
+The quantity. For a model m, a Raabin domain d and a seed s:
+
+gap(m, d, s) = macro-F1(m, pbc_test restricted to the classes present in d, s) − macro-F1(m, d, s)
+
+Positive is degradation. Macro-F1 is over the classes present in the eval set, and the class list is recorded beside the number. The source side is pbc_test restricted to the classes present in that target domain, so a 5-class number is never differenced against a 2-class one, and the restriction is named in the output. Predictions are an argmax over all five classes on every domain, on both sides of the difference: restricting the source side restricts which images are counted, never which classes the model may predict.
+
+The primary comparison is the paired difference of gaps, by seed:
+
+Δ_bb(d, s) = gap(bottleneck, d, s) − gap(baseline, d, s)
+Δ_bc(d, s) = gap(bottleneck, d, s) − gap(control, d, s)
+
+Negative Δ means the bottleneck lost less going from source to target than the model it is compared against, which is the direction the hypothesis predicts. Δ_bb is the hypothesis itself: attributes against raw CNN features. Δ_bc separates the representation from the architecture, since the control carries the same 31-unit bottleneck at lambda 0 and differs only in whether attribute labels supervised it.
+
+Reported per Raabin domain, separately: raabin_train, raabin_testA, raabin_testB. There is no pooled Raabin row. All three seeds' values are shown individually beside the mean ± std; three paired values are a sample of three, and the per-seed spread is the honest summary of them.
+
+No significance test. Three paired seeds do not support one, and a p-value computed on them would be read as more than it is. The per-seed values, the mean ± std, and the per-seed bootstrap CIs on each gap are the whole statistical claim.
+
+Secondary quantity: relative drop. relative_drop(m, d, s) = gap(m, d, s) / macro-F1(m, pbc_test restricted to d's classes, s) — the gap as a fraction of what the model had on the source side. It exists because an absolute gap of 0.10 means something different from a model at 0.99 than from a model at 0.70, and the three models are not guaranteed to land at the same source number. It is secondary and decides nothing: the decision rule below is on Δ, an absolute difference of absolute gaps. It carries no interval, because the bootstrap produces replicates for the gap and not for a ratio of a gap to a point estimate; it is reported per seed plus the mean ± std across seeds.
+
+Secondary gap: like-for-like on band neutrophils. The same gap computed with pbc_test_no_band_neutrophils on the source side, restricted to the target's classes in the same way, recorded under secondary_gaps. PBC labels band and segmented neutrophils both as Neutrophil, and the two archives' neutrophil populations need not be composed alike, so part of any neutrophil gap could be composition rather than domain shift. This subset removes the band neutrophils from the source side and asks whether the gap survives. It is computed inside the evaluation rather than afterwards because the record carries no per-image predictions, so nothing downstream could reconstruct it.
+
+It is non-decisive. It changes only one side of the difference, so it is not a clean control: it answers whether this gap is explained by band neutrophils alone, and nothing wider. It is reported beside the primary gap for every Raabin domain and model, and the conclusion is not restated on it.
+
+Soft and hard attribute modes are separate columns, for the bottleneck and the control. Hard mode is a deliberate train/eval mismatch and measures how far the model commits to discrete attribute decisions; it is not on its own evidence about domain invariance. The baseline has no attribute modes and is reported once; comparison between models is between soft columns.
+
+Caveats that travel with the numbers. Any basophil recall on a Raabin domain is one leukemia patient's cells, not a sample of basophils, and is reported with that caveat. Per-class recall carries no interval: the bootstrap is computed for macro-F1 and for the gap, and not per class.
+
+Decision rule. Chosen by the author on 2026-11-13; pending supervisor confirmation. If the supervisor changes it before the first Raabin look, that commit is the declaration of record.
+
+Applied separately to Δ_bb and Δ_bc, and separately per domain:
+
+supported on a domain: Δ < 0 in all three seeds
+not supported: Δ ≥ 0 in at least two seeds
+otherwise: mixed
+
+The three cases are exhaustive and do not overlap: three negative seeds is supported, exactly two is mixed, one or none is not supported. The count of negative seeds is printed beside the verdict so the rule can be checked by eye. A Δ of exactly zero counts as non-negative.
+
+Headline domains: raabin_train and raabin_testA. Both are described in the Raabin paper as acquired under the same conditions as each other, and differing from the source in lab and optics. The hypothesis is judged on these two.
+
+raabin_testB is reported as a camera-shift stress test and is not decisive. It holds two of the five classes and comes from a different camera, so its gap is not commensurable with the other two, and it is the only domain where the camera changes — which makes it the most interesting single number here and the least comparable. It is reported in full, with the same rule applied and the same verdict printed, and that verdict does not enter the conclusion.
+
+A verdict of mixed on either headline domain, or disagreement between Δ_bb and Δ_bc, is reported as such. There is no tie-break, and no rule that promotes a secondary quantity to decide one.
+
+None of the above may change once any Raabin number has been seen. A change is a protocol change, not a tweak: flag it and log it in section 8 with the date and the reason.
+
 Known limitations of this protocol, to be stated in any write-up:
 
 One target dataset, from a single lab network, so the shift measured is mostly camera and optics (see section 1).
