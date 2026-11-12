@@ -658,7 +658,8 @@ They are written to `/kaggle/working/results/`, and `results/` is gitignored, so
 nine records are not tracked by git unless you move them**. Losing them loses the numbers;
 the ledger does not hold them.
 
-**Proposed:** a new committed directory `eval_records/` at the repo root.
+`eval_records/` at the repo root is their tracked home. It is committed, and
+`eval_records/README.md` records why.
 
 ```bash
 mkdir -p eval_records
@@ -669,10 +670,12 @@ git add eval_records/ && git commit -m "results: the nine Raabin evaluation reco
 The justification is the ledger's own, from CLAUDE.md §5: a record that resets when
 `results/` is cleared does not constrain anything. Nine JSON files, each an embedded
 resolved config plus metrics, well under 2 MB in total, and `scripts/aggregate_eval.py`
-reads exactly this directory. Adopting it means a one-line change to the CLAUDE.md §5
-paragraph that currently names **two** things committed despite `results/` being
-gitignored — a protocol-document edit, so it waits for your approval rather than
-happening as a side effect.
+reads exactly this directory. CLAUDE.md §5 now names **three** things committed despite
+`results/` being gitignored, and a test asserts that paragraph names all three.
+
+Real evaluations only. `*_eval_dryrun.json` does not belong here: a dry run reads
+`pbc_val`, selects nothing and reports nothing, and keeping those alongside the records
+would stop the directory answering "which looks were spent".
 
 ### 5.6 Ledger rules for this section
 

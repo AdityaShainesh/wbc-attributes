@@ -131,7 +131,7 @@ Paths. Raw data lives under data/raw/, which is gitignored — the layout script
 
 Writes outside the repo are allowed in exactly one case: when env: kaggle, results are written to /kaggle/working. Every other env writes inside the repo only.
 
-Two things are committed despite results/ being gitignored: target_eval_ledger.jsonl, because a ledger that resets when results are cleared does not constrain anything, and configs/label_space.yaml, because it fixes what every class and attribute index means.
+Three things are committed despite results/ being gitignored: target_eval_ledger.jsonl, because a ledger that resets when results are cleared does not constrain anything, configs/label_space.yaml, because it fixes what every class and attribute index means, and eval_records/, which holds the per-evaluation *_eval.json records, because they are the only copy of the numbers — the ledger records that a look happened, not what it said.
 
 6. Metrics
 

@@ -1,8 +1,11 @@
 """The target evaluation ledger. Repeated target evaluation is tuning on the target, so
 a repeat is refused unless it is explicitly overridden and logged."""
 import json
+from pathlib import Path
 
 import pytest
+
+REPO = Path(__file__).resolve().parents[1]
 
 from src.ledger import (
     LedgerError,
@@ -209,3 +212,40 @@ def test_the_repo_root_ledger_exists_and_is_committed():
     tracked = subprocess.run(["git", "ls-files", "--error-unmatch", LEDGER_PATH.name],
                              cwd=REPO_ROOT, capture_output=True, text=True)
     assert tracked.returncode == 0, f"{LEDGER_PATH.name} is not tracked by git"
+
+
+# --- what must survive a cleared results/ ------------------------------------------------
+
+def test_eval_records_exists_and_is_not_gitignored():
+    """The nine *_eval.json records are the only copy of the evaluation numbers: the
+    ledger records that a look happened, not what it said. They are written to the
+    embedded config's results_dir, which is gitignored, so they need a tracked home
+    (CLAUDE.md sec 5).
+    """
+    import subprocess
+
+    records = REPO / "eval_records"
+    assert records.is_dir(), f"{records} does not exist"
+    ignored = subprocess.run(["git", "check-ignore", "-q", str(records)],
+                             cwd=REPO, capture_output=True)
+    assert ignored.returncode != 0, "eval_records/ is gitignored"
+
+
+def test_eval_records_holds_a_tracked_file():
+    """An empty directory cannot be committed, so the home is only real if something in
+    it is tracked."""
+    import subprocess
+
+    tracked = subprocess.run(["git", "ls-files", "eval_records"],
+                             cwd=REPO, capture_output=True, text=True).stdout.split()
+    assert tracked, "nothing under eval_records/ is tracked by git"
+
+
+def test_claude_md_names_everything_committed_despite_results_being_ignored():
+    """The paragraph is the only place the exception is recorded; a directory committed
+    without it reads as an oversight to anyone auditing the repo."""
+    paragraph = next(line for line in (REPO / "CLAUDE.md").read_text().splitlines()
+                     if "committed despite results/ being gitignored" in line)
+    for name in ("target_eval_ledger.jsonl", "configs/label_space.yaml",
+                 "eval_records/"):
+        assert name in paragraph, f"{name} is not named in: {paragraph}"
