@@ -348,7 +348,13 @@ cells in order and stop if one fails.
 #### Cell 1 — clone, check, CUDA
 
 ```python
-import subprocess, sys, importlib
+# Before torch is imported anywhere: cuBLAS reads this at initialisation, and
+# use_deterministic_algorithms(True) raises without it on a CUDA device.
+import os
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+import importlib.util
+import subprocess, sys
 from pathlib import Path
 
 REPO = Path("/kaggle/working/coe")
@@ -485,7 +491,7 @@ prints the record's keys, so every key the verification cell uses is checked aga
 reality before the real run.
 
 ```python
-!cd /kaggle/working/coe && python -m src.eval \
+!cd /kaggle/working/coe && python -u -m src.eval \
     --checkpoint "/kaggle/input/datasets/anikakrishnaa/wbc-final-checkpoints/wbc-final-checkpoints/baseline_seed0/last.pt" \
     --dry-run
 ```
@@ -495,8 +501,8 @@ import json
 rec = json.loads(Path("/kaggle/working/results/baseline_seed0_eval_dryrun.json").read_text())
 print("record keys:", sorted(rec))
 for k in ("run_id", "seed", "dry_run", "domains", "skipped_domains", "selection_role",
-          "selection_rule", "checkpoint_sha256", "buffer_sha256_before",
-          "buffer_sha256_after", "attribute_modes"):
+          "selection_rule", "override_reason", "checkpoint_sha256",
+          "buffer_sha256_before", "buffer_sha256_after", "attribute_modes"):
     assert k in rec, f"the verification cell expects {k!r} and it is not there"
     print(f"  {k:<22} {rec[k] if k != 'checkpoint_sha256' else rec[k][:12]}")
 print("\nresults keys per domain:", {d: sorted(v) for d, v in rec["results"].items()})
@@ -509,14 +515,17 @@ If anything here fails, **stop**. Nothing below has been spent yet.
 
 One cell each, seed-major, so a session that dies after three cells leaves a complete
 three-model comparison at seed 0 rather than three baselines. No flags. `last.pt`, never
-`best.pt` — `src/eval.py` refuses a non-headline checkpoint outright.
+`best.pt` — `src/eval.py` refuses a non-headline checkpoint outright. `python -u` on
+every call, so a cell that dies mid-domain has already printed how far it got; without it
+the buffered output is lost with the process and you cannot tell which domains were
+reached.
 
 ```python
 D = "/kaggle/input/datasets/anikakrishnaa/wbc-final-checkpoints/wbc-final-checkpoints"
 ```
 
 ```python
-!cd /kaggle/working/coe && python -m src.eval --checkpoint "$D/baseline_seed0/last.pt"
+!cd /kaggle/working/coe && python -u -m src.eval --checkpoint "$D/baseline_seed0/last.pt"
 ```
 
 Then one cell each, in this order:
@@ -594,25 +603,54 @@ running is a session someone can re-run a cell in.
 
 The clone's `target_eval_ledger.jsonl` starts at whatever is in git and dies with the
 session. Nothing on Kaggle remembers it. So, **after every session, before booking
-another**:
+another**, bring it home — but verify before appending rather than appending blind.
+
+The downloaded ledger is the local one plus whatever this session added, so its first *n*
+lines must be byte-identical to the local file. If they are not, the clone started from a
+different ledger than the one you hold, and concatenating the two would produce a file
+that is a record of neither.
 
 ```bash
 # on your machine, in the repo
-cat ~/Downloads/outputs/target_eval_ledger.jsonl >> target_eval_ledger.jsonl   # APPEND
-sort -u target_eval_ledger.jsonl | wc -l        # expect 36 after a complete pass
+DL=~/Downloads/outputs/target_eval_ledger.jsonl
+n=$(wc -l < target_eval_ledger.jsonl)
+
+# 1. the downloaded ledger must BEGIN with the local one, byte for byte.
+#    Guarded on n > 0: BSD head rejects -n 0, and the local ledger is empty
+#    before the first session.
+if [ "$n" -gt 0 ]; then
+  head -n "$n" "$DL" | cmp - target_eval_ledger.jsonl || {
+    echo "STOP: the session's ledger does not extend the local one."
+    echo "Do not append. Work out which clone it came from first."; exit 1; }
+fi
+
+# 2. append only what is new
+tail -n +$((n + 1)) "$DL" >> target_eval_ledger.jsonl
+
+# 3. check what you now hold
+wc -l < target_eval_ledger.jsonl                 # expect 36 after a complete pass
 python -c "
 import json, collections
 rows=[json.loads(l) for l in open('target_eval_ledger.jsonl') if l.strip()]
-print(collections.Counter(r['domain'] for r in rows))
+per=collections.Counter(r['domain'] for r in rows)
+print(dict(per), 'total', len(rows))
 print('roles:', collections.Counter(r.get('selection_role') for r in rows))
 print('overrides:', [r.get('override_reason') for r in rows if r.get('override_reason')])
+assert len(rows) == 36, f'expected 36 lines, got {len(rows)}'
+assert set(per.values()) == {9}, f'expected 9 per domain, got {dict(per)}'
+assert set(per) == {'pbc_test','raabin_train','raabin_testA','raabin_testB'}, dict(per)
+print('ledger verified')
 "
 git add target_eval_ledger.jsonl && git commit -m "ledger: Raabin evaluation, 9 checkpoints x 4 domains" && git push
 ```
 
-Append, never overwrite — the local file is the authoritative one. **Push before the next
-session**, because the next session's clone starts from the pushed ledger, and a clone
-that has forgotten an earlier look will cheerfully repeat it.
+`n` is counted **before** the append, and `tail -n +$((n+1))` takes only the lines past
+it, so running the block twice on the same download adds nothing the second time. Never
+overwrite the local file with the downloaded one: the local file is authoritative, and an
+overwrite silently drops any look recorded in a session whose output you did not keep.
+
+**Push before the next session**, because the next session's clone starts from the pushed
+ledger, and a clone that has forgotten an earlier look will cheerfully repeat it.
 
 ### 5.5 Where the records go
 
