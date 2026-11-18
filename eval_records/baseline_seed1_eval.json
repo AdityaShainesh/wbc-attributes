@@ -1,0 +1,794 @@
+{
+  "run_id": "baseline",
+  "seed": 1,
+  "checkpoint": "/kaggle/input/datasets/anikakrishnaa/wbc-final-checkpoints/wbc-final-checkpoints/baseline_seed1/last.pt",
+  "checkpoint_sha256": "40e06e74d20940e02cb941576cd3b95ad5e2ef18a4fe522a50a81d0a8b832c2e",
+  "config_sha256": "c5fc16a874771e907fab0e7e04665739d8d2fa2351ec16996f4954b0ccbb8e17",
+  "config": {
+    "run_id": "baseline",
+    "env": "local",
+    "seed": 1,
+    "device": "cuda",
+    "paths": {
+      "pbc_images": "/kaggle/input/datasets/anikakrishnaa/pbc-images/PBC_dataset_normal_DIB",
+      "wbcatt_dir": "/kaggle/input/datasets/anikakrishnaa/wbcatt",
+      "raabin_root": "/kaggle/input/datasets/anikakrishnaa/raabin-double-labeled",
+      "lisc_root": "/kaggle/input/datasets/anikakrishnaa/lisc",
+      "results_dir": "/kaggle/working/results"
+    },
+    "data": {
+      "class_mapping": {
+        "neutrophil": [
+          "pbc:neutrophil",
+          "wbcatt:Neutrophil",
+          "lisc:neut",
+          "raabin:Neutrophil"
+        ],
+        "lymphocyte": [
+          "pbc:lymphocyte",
+          "wbcatt:Lymphocyte",
+          "lisc:lymp",
+          "raabin:Lymphocyte"
+        ],
+        "monocyte": [
+          "pbc:monocyte",
+          "wbcatt:Monocyte",
+          "lisc:mono",
+          "raabin:Monocyte"
+        ],
+        "eosinophil": [
+          "pbc:eosinophil",
+          "wbcatt:Eosinophil",
+          "lisc:eosi",
+          "raabin:Eosinophil"
+        ],
+        "basophil": [
+          "pbc:basophil",
+          "wbcatt:Basophil",
+          "lisc:Baso",
+          "raabin:Basophil"
+        ],
+        "excluded": {
+          "pbc:ig": "immature granulocytes (promyelocytes PMY_, myelocytes MY_, metamyelocytes MMY_, IG_); not part of the 5-part differential",
+          "pbc:erythroblast": "nucleated red cell precursor, not a white blood cell",
+          "pbc:platelet": "not a white blood cell"
+        },
+        "excluded_files": {
+          "pbc:neutrophil/.DS_169665.jpg": "macOS .DS_Store metadata (6,148 bytes) with a .jpg name; not an image and not in WBCAtt",
+          "lisc:Train_Aug/": "augmented copies of LISC/Train added by whoever repackaged LISC; evaluation uses Train + Test only"
+        },
+        "secondary_subsets": {
+          "pbc_test_no_band_neutrophils": {
+            "split": "pbc_test",
+            "drop_filename_prefixes": {
+              "pbc:neutrophil": [
+                "BNE_",
+                "NEUTROPHIL_"
+              ]
+            }
+          }
+        }
+      },
+      "class_mapping_path": "/kaggle/working/coe/configs/class_mapping.yaml",
+      "label_space": {
+        "classes": [
+          "neutrophil",
+          "lymphocyte",
+          "monocyte",
+          "eosinophil",
+          "basophil"
+        ],
+        "attributes": {
+          "cell_size": [
+            "big",
+            "small"
+          ],
+          "cell_shape": [
+            "round",
+            "irregular"
+          ],
+          "nucleus_shape": [
+            "segmented-bilobed",
+            "unsegmented-band",
+            "unsegmented-indented",
+            "segmented-multilobed",
+            "unsegmented-round",
+            "irregular"
+          ],
+          "nuclear_cytoplasmic_ratio": [
+            "low",
+            "high"
+          ],
+          "chromatin_density": [
+            "densely",
+            "loosely"
+          ],
+          "cytoplasm_vacuole": [
+            "no",
+            "yes"
+          ],
+          "cytoplasm_texture": [
+            "clear",
+            "frosted"
+          ],
+          "cytoplasm_colour": [
+            "light blue",
+            "blue",
+            "purple blue"
+          ],
+          "granule_type": [
+            "small",
+            "round",
+            "nil",
+            "coarse"
+          ],
+          "granule_colour": [
+            "pink",
+            "red",
+            "nil",
+            "purple"
+          ],
+          "granularity": [
+            "yes",
+            "no"
+          ]
+        }
+      },
+      "label_space_path": "/kaggle/working/coe/configs/label_space.yaml",
+      "source": "pbc_wbcatt",
+      "image_size": 224,
+      "subset_n_images": null,
+      "normalization": {
+        "mean": [
+          0.485,
+          0.456,
+          0.406
+        ],
+        "std": [
+          0.229,
+          0.224,
+          0.225
+        ]
+      }
+    },
+    "model": {
+      "type": "baseline",
+      "backbone": "resnet50",
+      "backbone_norm": "batchnorm",
+      "imagenet_weights": null
+    },
+    "bottleneck": null,
+    "train": {
+      "epochs": 30,
+      "batch_size": 32,
+      "lr": 0.0003,
+      "optimizer": "adamw",
+      "weight_decay": 0.0001,
+      "class_weighting": "none",
+      "augmentation": {
+        "hflip": 0.5,
+        "vflip": 0.5,
+        "rotation_degrees": 180.0,
+        "color_jitter": {
+          "brightness": 0.1,
+          "contrast": 0.1,
+          "hue": 0.02,
+          "saturation": 0.1
+        }
+      },
+      "lr_schedule": "cosine",
+      "warmup_epochs": 2
+    },
+    "selection": {
+      "rule": "final_epoch",
+      "report_metric": "val_macro_f1",
+      "divergence_guard": "non_finite_loss"
+    },
+    "eval": {
+      "domains": [
+        "pbc_test",
+        "raabin_train",
+        "raabin_testA",
+        "raabin_testB"
+      ],
+      "attribute_modes": null,
+      "secondary_subsets": [
+        "pbc_test_no_band_neutrophils"
+      ],
+      "abstention": {
+        "threshold_split": "pbc_val",
+        "coverage_grid": [
+          0.5,
+          0.6,
+          0.7,
+          0.8,
+          0.9,
+          0.95,
+          1.0
+        ]
+      },
+      "ece_bins": 15,
+      "macro_f1_over": "present_classes"
+    },
+    "bootstrap": {
+      "enabled": true,
+      "n": 2000,
+      "ci": 0.95,
+      "stratify_by": "class",
+      "resample_domains_independently": true
+    }
+  },
+  "git": {
+    "commit": "bccbea91c4924708a60ae6ea750ce669b515e0f4",
+    "dirty": true
+  },
+  "hardware": {
+    "hostname": "133438c3ada3",
+    "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+    "python": "3.13.16",
+    "torch": "2.11.0+cu130",
+    "cuda": "13.0",
+    "device": "cuda",
+    "cuda_device_name": "Tesla T4"
+  },
+  "dry_run": false,
+  "override_reason": null,
+  "selection_role": "headline",
+  "selection_rule": "final_epoch",
+  "attribute_modes": [
+    "soft"
+  ],
+  "domains": [
+    "pbc_test",
+    "raabin_train",
+    "raabin_testA",
+    "raabin_testB"
+  ],
+  "skipped_domains": {},
+  "results": {
+    "pbc_test": {
+      "soft": {
+        "n": 3099,
+        "macro_f1": 0.997513409064114,
+        "macro_f1_classes": [
+          "neutrophil",
+          "lymphocyte",
+          "monocyte",
+          "eosinophil",
+          "basophil"
+        ],
+        "per_class_recall": {
+          "neutrophil": 1.0,
+          "lymphocyte": 0.9918256130790191,
+          "monocyte": 0.9955056179775281,
+          "eosinophil": 1.0,
+          "basophil": 1.0
+        },
+        "ece": 0.0012026533998955036,
+        "mean_max_probability": 0.998864626915234,
+        "accuracy": 0.9983865763149403,
+        "macro_f1_ci": {
+          "point": 0.997513409064114,
+          "lower": 0.9950256070964738,
+          "upper": 0.9995026818128228,
+          "n": 2000,
+          "ci": 0.95,
+          "seed": 1,
+          "stratify_by": "class"
+        },
+        "coverage": {
+          "0.5": {
+            "threshold": 1.0,
+            "achieved_coverage": 0.6043885124233623,
+            "n_retained": 1873,
+            "accuracy": 1.0
+          },
+          "0.6": {
+            "threshold": 0.9999998807907104,
+            "achieved_coverage": 0.670216198773798,
+            "n_retained": 2077,
+            "accuracy": 1.0
+          },
+          "0.7": {
+            "threshold": 0.999999725818634,
+            "achieved_coverage": 0.6999031945788964,
+            "n_retained": 2169,
+            "accuracy": 1.0
+          },
+          "0.8": {
+            "threshold": 0.9999988079071045,
+            "achieved_coverage": 0.7918683446272992,
+            "n_retained": 2454,
+            "accuracy": 1.0
+          },
+          "0.9": {
+            "threshold": 0.9999909400939941,
+            "achieved_coverage": 0.8928686673120362,
+            "n_retained": 2767,
+            "accuracy": 1.0
+          },
+          "0.95": {
+            "threshold": 0.9999116957187653,
+            "achieved_coverage": 0.9493384962891255,
+            "n_retained": 2942,
+            "accuracy": 1.0
+          },
+          "1.0": {
+            "threshold": 0.5196198225021362,
+            "achieved_coverage": 0.9996773152629881,
+            "n_retained": 3098,
+            "accuracy": 0.9987088444157521
+          }
+        }
+      }
+    },
+    "raabin_train": {
+      "soft": {
+        "n": 10175,
+        "macro_f1": 0.4238442665269678,
+        "macro_f1_classes": [
+          "neutrophil",
+          "lymphocyte",
+          "monocyte",
+          "eosinophil",
+          "basophil"
+        ],
+        "per_class_recall": {
+          "neutrophil": 0.6347295779168672,
+          "lymphocyte": 0.545941491553358,
+          "monocyte": 0.27807486631016043,
+          "eosinophil": 0.8024193548387096,
+          "basophil": 0.16981132075471697
+        },
+        "ece": 0.28703905799757934,
+        "mean_max_probability": 0.8833027752318605,
+        "accuracy": 0.5964619164619165,
+        "macro_f1_ci": {
+          "point": 0.4238442665269678,
+          "lower": 0.41111076216595266,
+          "upper": 0.436752233034821,
+          "n": 2000,
+          "ci": 0.95,
+          "seed": 1,
+          "stratify_by": "class"
+        },
+        "coverage": {
+          "0.5": {
+            "threshold": 1.0,
+            "achieved_coverage": 0.007665847665847666,
+            "n_retained": 78,
+            "accuracy": 0.8974358974358975
+          },
+          "0.6": {
+            "threshold": 0.9999998807907104,
+            "achieved_coverage": 0.010024570024570025,
+            "n_retained": 102,
+            "accuracy": 0.8627450980392157
+          },
+          "0.7": {
+            "threshold": 0.999999725818634,
+            "achieved_coverage": 0.011695331695331695,
+            "n_retained": 119,
+            "accuracy": 0.8571428571428571
+          },
+          "0.8": {
+            "threshold": 0.9999988079071045,
+            "achieved_coverage": 0.01886977886977887,
+            "n_retained": 192,
+            "accuracy": 0.8177083333333334
+          },
+          "0.9": {
+            "threshold": 0.9999909400939941,
+            "achieved_coverage": 0.041965601965601965,
+            "n_retained": 427,
+            "accuracy": 0.7540983606557377
+          },
+          "0.95": {
+            "threshold": 0.9999116957187653,
+            "achieved_coverage": 0.09651105651105651,
+            "n_retained": 982,
+            "accuracy": 0.745417515274949
+          },
+          "1.0": {
+            "threshold": 0.5196198225021362,
+            "achieved_coverage": 0.9458476658476659,
+            "n_retained": 9624,
+            "accuracy": 0.6102452202826267
+          }
+        }
+      }
+    },
+    "raabin_testA": {
+      "soft": {
+        "n": 4339,
+        "macro_f1": 0.46080034072593073,
+        "macro_f1_classes": [
+          "neutrophil",
+          "lymphocyte",
+          "monocyte",
+          "eosinophil",
+          "basophil"
+        ],
+        "per_class_recall": {
+          "neutrophil": 0.6,
+          "lymphocyte": 0.5464216634429401,
+          "monocyte": 0.3034188034188034,
+          "eosinophil": 0.9751552795031055,
+          "basophil": 0.21348314606741572
+        },
+        "ece": 0.30242787611652117,
+        "mean_max_probability": 0.8935779106866987,
+        "accuracy": 0.5911500345701775,
+        "macro_f1_ci": {
+          "point": 0.46080034072593073,
+          "lower": 0.4340773861418956,
+          "upper": 0.4843022496143999,
+          "n": 2000,
+          "ci": 0.95,
+          "seed": 1,
+          "stratify_by": "class"
+        },
+        "coverage": {
+          "0.5": {
+            "threshold": 1.0,
+            "achieved_coverage": 0.014749942383037565,
+            "n_retained": 64,
+            "accuracy": 0.84375
+          },
+          "0.6": {
+            "threshold": 0.9999998807907104,
+            "achieved_coverage": 0.019359299377736807,
+            "n_retained": 84,
+            "accuracy": 0.7976190476190477
+          },
+          "0.7": {
+            "threshold": 0.999999725818634,
+            "achieved_coverage": 0.022816317123761237,
+            "n_retained": 99,
+            "accuracy": 0.797979797979798
+          },
+          "0.8": {
+            "threshold": 0.9999988079071045,
+            "achieved_coverage": 0.0375662595067988,
+            "n_retained": 163,
+            "accuracy": 0.7914110429447853
+          },
+          "0.9": {
+            "threshold": 0.9999909400939941,
+            "achieved_coverage": 0.06176538372896981,
+            "n_retained": 268,
+            "accuracy": 0.8059701492537313
+          },
+          "0.95": {
+            "threshold": 0.9999116957187653,
+            "achieved_coverage": 0.1290619958515787,
+            "n_retained": 560,
+            "accuracy": 0.7928571428571428
+          },
+          "1.0": {
+            "threshold": 0.5196198225021362,
+            "achieved_coverage": 0.9566720442498271,
+            "n_retained": 4151,
+            "accuracy": 0.6034690436039508
+          }
+        }
+      }
+    },
+    "raabin_testB": {
+      "soft": {
+        "n": 2119,
+        "macro_f1": 0.1773065815473476,
+        "macro_f1_classes": [
+          "neutrophil",
+          "lymphocyte"
+        ],
+        "per_class_recall": {
+          "neutrophil": 0.1780821917808219,
+          "lymphocyte": 0.02702702702702703,
+          "monocyte": null,
+          "eosinophil": null,
+          "basophil": null
+        },
+        "ece": 0.7420035160870528,
+        "mean_max_probability": 0.9077515878194681,
+        "accuracy": 0.16753185464841908,
+        "macro_f1_ci": {
+          "point": 0.1773065815473476,
+          "lower": 0.15152811395727908,
+          "upper": 0.20630559634800283,
+          "n": 2000,
+          "ci": 0.95,
+          "seed": 1,
+          "stratify_by": "class"
+        },
+        "coverage": {
+          "0.5": {
+            "threshold": 1.0,
+            "achieved_coverage": 0.0,
+            "n_retained": 0,
+            "accuracy": null
+          },
+          "0.6": {
+            "threshold": 0.9999998807907104,
+            "achieved_coverage": 0.00047192071731949034,
+            "n_retained": 1,
+            "accuracy": 0.0
+          },
+          "0.7": {
+            "threshold": 0.999999725818634,
+            "achieved_coverage": 0.00047192071731949034,
+            "n_retained": 1,
+            "accuracy": 0.0
+          },
+          "0.8": {
+            "threshold": 0.9999988079071045,
+            "achieved_coverage": 0.0009438414346389807,
+            "n_retained": 2,
+            "accuracy": 0.0
+          },
+          "0.9": {
+            "threshold": 0.9999909400939941,
+            "achieved_coverage": 0.0075507314771118455,
+            "n_retained": 16,
+            "accuracy": 0.0625
+          },
+          "0.95": {
+            "threshold": 0.9999116957187653,
+            "achieved_coverage": 0.04719207173194903,
+            "n_retained": 100,
+            "accuracy": 0.03
+          },
+          "1.0": {
+            "threshold": 0.5196198225021362,
+            "achieved_coverage": 0.9811231713072204,
+            "n_retained": 2079,
+            "accuracy": 0.16113516113516113
+          }
+        }
+      }
+    }
+  },
+  "secondary_subsets": {
+    "pbc_test_no_band_neutrophils": {
+      "n": 2606,
+      "modes": {
+        "soft": {
+          "n": 2606,
+          "macro_f1": 0.997513409064114,
+          "macro_f1_classes": [
+            "neutrophil",
+            "lymphocyte",
+            "monocyte",
+            "eosinophil",
+            "basophil"
+          ],
+          "per_class_recall": {
+            "neutrophil": 1.0,
+            "lymphocyte": 0.9918256130790191,
+            "monocyte": 0.9955056179775281,
+            "eosinophil": 1.0,
+            "basophil": 1.0
+          },
+          "ece": 0.0012972225890375188,
+          "mean_max_probability": 0.9988097895225561,
+          "accuracy": 0.9980813507290868,
+          "macro_f1_ci": {
+            "point": 0.997513409064114,
+            "lower": 0.9950280133484372,
+            "upper": 0.9995026818128228,
+            "n": 2000,
+            "ci": 0.95,
+            "seed": 1,
+            "stratify_by": "class"
+          },
+          "coverage": {
+            "0.5": {
+              "threshold": 1.0,
+              "achieved_coverage": 0.5955487336914812,
+              "n_retained": 1552,
+              "accuracy": 1.0
+            },
+            "0.6": {
+              "threshold": 0.9999998807907104,
+              "achieved_coverage": 0.6588641596316194,
+              "n_retained": 1717,
+              "accuracy": 1.0
+            },
+            "0.7": {
+              "threshold": 0.999999725818634,
+              "achieved_coverage": 0.6876438986953185,
+              "n_retained": 1792,
+              "accuracy": 1.0
+            },
+            "0.8": {
+              "threshold": 0.9999988079071045,
+              "achieved_coverage": 0.7789716039907905,
+              "n_retained": 2030,
+              "accuracy": 1.0
+            },
+            "0.9": {
+              "threshold": 0.9999909400939941,
+              "achieved_coverage": 0.884113584036838,
+              "n_retained": 2304,
+              "accuracy": 1.0
+            },
+            "0.95": {
+              "threshold": 0.9999116957187653,
+              "achieved_coverage": 0.9470452801227935,
+              "n_retained": 2468,
+              "accuracy": 1.0
+            },
+            "1.0": {
+              "threshold": 0.5196198225021362,
+              "achieved_coverage": 0.9996162701458173,
+              "n_retained": 2605,
+              "accuracy": 0.9984644913627639
+            }
+          }
+        }
+      }
+    }
+  },
+  "per_attribute": {},
+  "gaps": {
+    "raabin_train": {
+      "source_domain": "pbc_test",
+      "modes": {
+        "soft": {
+          "gap": 0.5736691425371463,
+          "source_point": 0.997513409064114,
+          "target_point": 0.4238442665269678,
+          "lower": 0.5608305702988144,
+          "upper": 0.5867549541457259,
+          "resampled_independently": true,
+          "n_source_draws": 2000,
+          "n_target_draws": 2000,
+          "ci": 0.95,
+          "seed": 1
+        }
+      },
+      "source_classes": [
+        "neutrophil",
+        "lymphocyte",
+        "monocyte",
+        "eosinophil",
+        "basophil"
+      ]
+    },
+    "raabin_testA": {
+      "source_domain": "pbc_test",
+      "modes": {
+        "soft": {
+          "gap": 0.5367130683381833,
+          "source_point": 0.997513409064114,
+          "target_point": 0.46080034072593073,
+          "lower": 0.5116999867646459,
+          "upper": 0.5625145898745091,
+          "resampled_independently": true,
+          "n_source_draws": 2000,
+          "n_target_draws": 2000,
+          "ci": 0.95,
+          "seed": 1
+        }
+      },
+      "source_classes": [
+        "neutrophil",
+        "lymphocyte",
+        "monocyte",
+        "eosinophil",
+        "basophil"
+      ]
+    },
+    "raabin_testB": {
+      "source_domain": "pbc_test",
+      "modes": {
+        "soft": {
+          "gap": 0.8206414348685211,
+          "source_point": 0.9979480164158687,
+          "target_point": 0.1773065815473476,
+          "lower": 0.78928907578857,
+          "upper": 0.8470776194852981,
+          "resampled_independently": true,
+          "n_source_draws": 2000,
+          "n_target_draws": 2000,
+          "ci": 0.95,
+          "seed": 1
+        }
+      },
+      "source_classes": [
+        "neutrophil",
+        "lymphocyte"
+      ]
+    }
+  },
+  "secondary_gaps": {
+    "pbc_test_no_band_neutrophils": {
+      "raabin_train": {
+        "source_domain": "pbc_test_no_band_neutrophils",
+        "modes": {
+          "soft": {
+            "gap": 0.5736691425371463,
+            "source_point": 0.997513409064114,
+            "target_point": 0.4238442665269678,
+            "lower": 0.5609450481069272,
+            "upper": 0.5867042327195058,
+            "resampled_independently": true,
+            "n_source_draws": 2000,
+            "n_target_draws": 2000,
+            "ci": 0.95,
+            "seed": 1
+          }
+        },
+        "source_classes": [
+          "neutrophil",
+          "lymphocyte",
+          "monocyte",
+          "eosinophil",
+          "basophil"
+        ]
+      },
+      "raabin_testA": {
+        "source_domain": "pbc_test_no_band_neutrophils",
+        "modes": {
+          "soft": {
+            "gap": 0.5367130683381833,
+            "source_point": 0.997513409064114,
+            "target_point": 0.46080034072593073,
+            "lower": 0.5117988539876802,
+            "upper": 0.5626457544211296,
+            "resampled_independently": true,
+            "n_source_draws": 2000,
+            "n_target_draws": 2000,
+            "ci": 0.95,
+            "seed": 1
+          }
+        },
+        "source_classes": [
+          "neutrophil",
+          "lymphocyte",
+          "monocyte",
+          "eosinophil",
+          "basophil"
+        ]
+      },
+      "raabin_testB": {
+        "source_domain": "pbc_test_no_band_neutrophils",
+        "modes": {
+          "soft": {
+            "gap": 0.8206414348685211,
+            "source_point": 0.9979480164158687,
+            "target_point": 0.1773065815473476,
+            "lower": 0.7897272036037783,
+            "upper": 0.8474233782123551,
+            "resampled_independently": true,
+            "n_source_draws": 2000,
+            "n_target_draws": 2000,
+            "ci": 0.95,
+            "seed": 1
+          }
+        },
+        "source_classes": [
+          "neutrophil",
+          "lymphocyte"
+        ]
+      }
+    }
+  },
+  "abstention_thresholds": {
+    "soft": {
+      "0.5": 1.0,
+      "0.6": 0.9999998807907104,
+      "0.7": 0.999999725818634,
+      "0.8": 0.9999988079071045,
+      "0.9": 0.9999909400939941,
+      "0.95": 0.9999116957187653,
+      "1.0": 0.5196198225021362
+    }
+  },
+  "buffer_sha256_before": "4094e9b5fbfea07ac39d1f5ecc4dad569dd8374738d144cddcbddcfe3c25481e",
+  "buffer_sha256_after": "4094e9b5fbfea07ac39d1f5ecc4dad569dd8374738d144cddcbddcfe3c25481e",
+  "wall_clock_seconds": 391.48639726638794,
+  "model_training_mode_seen": false,
+  "grad_enabled_seen": false,
+  "results_json": "/kaggle/working/results/baseline_seed1_eval.json"
+}
