@@ -29,6 +29,7 @@ from src.data.domains import (
     domain_of,
 )
 from src.data.label_space import LabelSpace
+from src.data.stain_cache import cached_cfg
 from src.data.transforms import build_eval_transform, build_train_transform
 
 TRAIN_SPLIT = "pbc_train"
@@ -158,6 +159,8 @@ def make_train_loader(cfg, mapping: ClassMapping, label_space: LabelSpace,
                       dataset_id: str = TRAIN_SPLIT) -> DataLoader:
     """pbc_train only. Shuffled and augmented."""
     _require(dataset_id, TRAIN_SPLIT)
+    # Swapped only for loader construction; the recorded config keeps the real method.
+    cfg = cached_cfg(cfg, dataset_id)
     dataset = _build_source(cfg, dataset_id, mapping, label_space,
                             build_train_transform(cfg), subset=True)
     dataset.augmented = True
@@ -175,6 +178,7 @@ def make_val_loader(cfg, mapping: ClassMapping, label_space: LabelSpace,
                     dataset_id: str = TUNING_SPLIT) -> DataLoader:
     """pbc_val only - the one split any tuning decision may read. No augmentation."""
     _require(dataset_id, TUNING_SPLIT)
+    cfg = cached_cfg(cfg, dataset_id)
     dataset = _build_source(cfg, dataset_id, mapping, label_space,
                             build_eval_transform(cfg), subset=True)
     return DataLoader(dataset, batch_size=cfg.train.batch_size, shuffle=False,
@@ -219,6 +223,7 @@ def make_eval_loader(cfg, dataset_id: str, mapping: ClassMapping,
     """
     if eval_loader_unavailable(cfg, dataset_id) is not None:
         return None
+    cfg = cached_cfg(cfg, dataset_id)
     transform = build_eval_transform(cfg)
 
     if domain_of(dataset_id) is Domain.SOURCE:

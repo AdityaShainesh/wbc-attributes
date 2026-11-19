@@ -126,6 +126,21 @@ class AuditSettings:
 
 
 @dataclass(frozen=True)
+class StainNormCfg:
+    """Which stain normalisation an arm applies, and the reference it is defined by.
+
+    Optional, defaulting to none, so the baseline/bottleneck/control configs that
+    predate the comparative study stay byte-identical and reproduce exactly.
+    """
+
+    method: str
+    reference: str | None = None
+    # Precomputed normalised images (src/data/stain_cache.py). On by default: at 30
+    # epochs with no early stopping, normalising on the fly costs hours per seed.
+    cache: bool = True
+
+
+@dataclass(frozen=True)
 class DataCfg:
     class_mapping: ClassMapping
     class_mapping_path: Path
@@ -134,6 +149,7 @@ class DataCfg:
     image_size: int
     subset_n_images: int | None
     normalization: dict[str, list[float]]
+    stain_norm: StainNormCfg = StainNormCfg(method="none")
 
 
 @dataclass(frozen=True)
@@ -367,6 +383,10 @@ EXP_REQUIRED = EXP_TOP - {"bottleneck", "device", "selection"}
 
 DATA_KEYS = {"class_mapping", "label_space", "source", "image_size",
              "subset_n_images", "normalization"}
+# Allowed but not required: omitting it means no stain normalisation, which is what
+# every config written before the comparative study intends.
+DATA_OPTIONAL = {"stain_norm"}
+STAIN_KEYS = {"method", "reference", "cache"}
 MODEL_KEYS = {"type", "backbone", "backbone_norm", "imagenet_weights"}
 TRAIN_KEYS = {"epochs", "batch_size", "lr", "optimizer", "weight_decay",
               "class_weighting", "augmentation", "lr_schedule", "warmup_epochs"}
@@ -413,8 +433,39 @@ def _check_no_target_under_train(train_doc: dict) -> None:
             )
 
 
+def _build_stain_norm(node) -> StainNormCfg:
+    """Validate data.stain_norm. Absent means none; a method needs a reference file.
+
+    The reference must exist at config load, not at the first batch: a run that dies an
+    hour in because a path was wrong has already wasted the GPU time.
+    """
+    from src.data.stain import METHODS
+
+    if node is None:
+        return StainNormCfg(method="none")
+    node = _check_keys(node, STAIN_KEYS, {"method"}, "data.stain_norm")
+    method = node["method"]
+    if method not in METHODS:
+        raise ConfigError(
+            f"data.stain_norm.method: {method!r} is not one of {', '.join(METHODS)}")
+    reference = node.get("reference")
+    cache = node.get("cache", True)
+    if not isinstance(cache, bool):
+        raise ConfigError("data.stain_norm.cache: expected true or false")
+    if method == "none":
+        return StainNormCfg(method="none", reference=reference, cache=cache)
+    if not reference:
+        raise ConfigError(
+            f"data.stain_norm.reference: required when method is {method!r}; it is the "
+            f"single image the normalisation is defined by (CLAUDE.md sec 3)")
+    path = _resolve_path(reference, "data.stain_norm.reference")
+    if not path.exists():
+        raise ConfigError(f"data.stain_norm.reference: not found: {path}")
+    return StainNormCfg(method=method, reference=str(path), cache=cache)
+
+
 def _build_data(doc: dict) -> tuple[DataCfg, dict]:
-    node = _check_keys(doc["data"], DATA_KEYS, DATA_KEYS, "data")
+    node = _check_keys(doc["data"], DATA_KEYS | DATA_OPTIONAL, DATA_KEYS, "data")
     mapping_path = _resolve_path(node["class_mapping"], "data.class_mapping")
     if not mapping_path.exists():
         raise ConfigError(f"data.class_mapping: not found: {mapping_path}")
@@ -447,6 +498,8 @@ def _build_data(doc: dict) -> tuple[DataCfg, dict]:
             f"dataset are not permitted (CLAUDE.md sec 3)."
         )
 
+    stain = _build_stain_norm(node.get("stain_norm"))
+
     cfg = DataCfg(
         class_mapping=mapping,
         class_mapping_path=mapping_path,
@@ -455,6 +508,7 @@ def _build_data(doc: dict) -> tuple[DataCfg, dict]:
         image_size=node["image_size"],
         subset_n_images=subset,
         normalization={"mean": mean, "std": std},
+        stain_norm=stain,
     )
     resolved = {
         "class_mapping": mapping.raw,
@@ -466,6 +520,8 @@ def _build_data(doc: dict) -> tuple[DataCfg, dict]:
         "image_size": cfg.image_size,
         "subset_n_images": cfg.subset_n_images,
         "normalization": {"mean": mean, "std": std},
+        "stain_norm": {"method": stain.method, "reference": stain.reference,
+                       "cache": stain.cache},
     }
     return cfg, resolved
 

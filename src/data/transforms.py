@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from torchvision import transforms
 
+from src.data.stain import build_normalizer
+
 
 def _normalize(cfg):
     return transforms.Normalize(mean=cfg.data.normalization["mean"],
@@ -28,9 +30,20 @@ def _resize(cfg):
     return transforms.Resize((size, size))
 
 
+def _stain(cfg):
+    """Stain normalisation, first, on the original pixels.
+
+    Before the resize so the method sees the image it was designed for, and in BOTH
+    transforms: an arm trained on normalised images and evaluated on raw ones would
+    report a domain drop that is an artefact of the pipeline (CLAUDE.md sec 3).
+    """
+    normalizer = build_normalizer(cfg)
+    return [normalizer] if normalizer is not None else []
+
+
 def build_eval_transform(cfg):
     """Deterministic. Used for val, source test and every target domain."""
-    return transforms.Compose([
+    return transforms.Compose(_stain(cfg) + [
         _resize(cfg),
         transforms.ToTensor(),
         _normalize(cfg),
@@ -40,7 +53,7 @@ def build_eval_transform(cfg):
 def build_train_transform(cfg):
     """Eval transform plus augmentation. Training data only, which is source only."""
     aug = cfg.train.augmentation
-    steps = [_resize(cfg)]
+    steps = _stain(cfg) + [_resize(cfg)]
 
     # Blood smears have no canonical orientation, so flips and full rotation are
     # label-preserving for all five classes and all 11 attributes.

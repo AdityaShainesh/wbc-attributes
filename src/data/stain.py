@@ -58,13 +58,21 @@ class StainReference:
     candidates: int
 
     def resolve(self, pbc_images: Path) -> Path:
-        full = Path(pbc_images) / self.path
-        if not full.exists():
-            raise StainError(
-                f"stain reference image not found: {full}. It is relative to "
-                f"paths.pbc_images; regenerate with scripts/choose_stain_reference.py"
-            )
-        return full
+        """Locate the reference under paths.pbc_images.
+
+        Tries the same order datasets._candidate_paths does -- parent first, then the
+        image root itself -- because the PBC CSV rows are written relative to the parent
+        ("PBC_dataset_normal_DIB/neutrophil/...") and the reference is recorded the same
+        way. Resolving only one of the two would work on one layout and not the other.
+        """
+        root = Path(pbc_images)
+        for candidate in (root.parent / self.path, root / self.path):
+            if candidate.exists():
+                return candidate
+        raise StainError(
+            f"stain reference image not found: tried {root.parent / self.path} and "
+            f"{root / self.path}. Regenerate it with scripts/choose_stain_reference.py"
+        )
 
 
 def load_reference(path: str | Path) -> StainReference:
