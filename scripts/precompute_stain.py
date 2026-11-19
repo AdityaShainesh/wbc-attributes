@@ -45,6 +45,22 @@ def specs_from_config(config):
     return out
 
 
+def eval_domains():
+    """Domains configs/eval.yaml will evaluate, so their cache exists before it runs.
+
+    A stain-normalised arm is evaluated on stain-normalised target images, so those need
+    caching too -- otherwise src/eval.py hits a cache miss on LISC and Raabin and stops.
+    This reads target images, which is legitimate: it is deterministic preprocessing for
+    the once-only evaluation, and it makes no decision of any kind.
+    """
+    path = CONFIGS / "eval.yaml"
+    if not path.exists():
+        return []
+    config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return [{"dataset": d["dataset"], "split": d["split"]}
+            for d in config.get("domains", []) if d.get("dataset") and d.get("split")]
+
+
 def main():
     sys.path.insert(0, str(ROOT))
     from src.data import build_dataset, load_attribute_space, load_label_space
@@ -70,7 +86,10 @@ def main():
         print(f"\n{path.name}: {method} at {image_size}px -> "
               f"{cache_dir(method, image_size).relative_to(ROOT)}", flush=True)
 
-        for spec in specs_from_config(config):
+        # Training splits, plus every domain configs/eval.yaml will evaluate: a
+        # stain-normalised arm is evaluated on stain-normalised target images, and
+        # without their cache src/eval.py stops on a cache miss partway through.
+        for spec in specs_from_config(config) + eval_domains():
             # cache=False so build_dataset gives the raw dataset, not the cached wrapper
             # we are about to populate.
             source = build_dataset(

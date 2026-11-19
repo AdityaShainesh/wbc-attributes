@@ -140,5 +140,6 @@ def test_build_dataset_from_a_config_dict():
 
 
 def test_build_dataset_rejects_an_unknown_dataset_name():
-    with pytest.raises(MappingError, match="raabin"):
-        build_dataset({"dataset": "raabin", "split": "test"})
+    # Raabin used to be the example here; it is a known target domain now.
+    with pytest.raises(MappingError, match="cellavision"):
+        build_dataset({"dataset": "cellavision", "split": "test"})

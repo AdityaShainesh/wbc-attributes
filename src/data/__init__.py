@@ -14,6 +14,7 @@ from src.data.cache import CachedStainDataset
 from src.data.lisc import LiscDataset
 from src.data.mapping import MappingError, load_attribute_space, load_label_space
 from src.data.pbc import PbcDataset
+from src.data.raabin import RaabinDataset
 from src.data.transforms import build_cached_transform, build_train_transform, build_transform
 from src.utils.seed import seed_worker
 
@@ -36,7 +37,7 @@ def resolve_num_workers(config):
 
 # Target domains are listed here so an attempt to load one is a deliberate, visible act.
 SOURCE_DATASETS = ("pbc",)
-TARGET_DATASETS = ("lisc",)
+TARGET_DATASETS = ("lisc", "raabin")
 
 
 def build_dataset(config, labels=None, attributes=None, train=False):
@@ -69,6 +70,11 @@ def build_dataset(config, labels=None, attributes=None, train=False):
                              transform=transform)
     elif name == "lisc":
         dataset = LiscDataset(config["split"], labels=labels, transform=transform)
+    elif name == "raabin":
+        # allow_adaptation_split is never set from a config: only Model 4's domain head
+        # may touch raabin/Train, and it has to ask for it in code.
+        dataset = RaabinDataset(config["split"], labels=labels, transform=transform,
+                                allow_adaptation_split=config.get("_allow_adaptation", False))
     else:
         raise MappingError(
             f"unknown dataset {name!r}; known source datasets {SOURCE_DATASETS}, "
@@ -134,8 +140,8 @@ def build_dataloader(config, dataset=None, labels=None, attributes=None, train=F
 
 
 __all__ = [
-    "build_dataset", "build_dataloader", "collate", "maybe_subset",
-    "PbcDataset", "LiscDataset", "MappingError",
+    "build_dataset", "build_dataloader", "collate", "maybe_subset", "resolve_num_workers",
+    "PbcDataset", "LiscDataset", "RaabinDataset", "MappingError",
     "load_label_space", "load_attribute_space",
     "SOURCE_DATASETS", "TARGET_DATASETS",
 ]

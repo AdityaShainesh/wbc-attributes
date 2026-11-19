@@ -1,0 +1,41 @@
+# Zero-shot cross-lab evaluation of the four literature models.
+#
+#   python -m src.eval --config configs/eval.yaml
+#
+# THIS CONFIG TOUCHES TARGET DATA. Everything it evaluates was trained, selected and
+# thresholded on PBC alone; this reads the resulting checkpoints once and reports how
+# far they fall on other labs. Nothing here tunes anything (CLAUDE.md section 3).
+#
+# The four arms below are frozen as of this run. Any later change to them is a change
+# made with knowledge of target performance, and cannot be reported as zero-shot.
+
+run_id: eval_literature_models
+
+# Checkpoints and training records. Both default to results/; override on a machine
+# where they live elsewhere, e.g. a Kaggle notebook-output mount.
+# checkpoints_dir: /kaggle/input/<training-notebook>/results/checkpoints
+# results_dir: /kaggle/input/<training-notebook>/results
+
+runs:
+  - model1_direct_cnn
+  - model2a_macenko
+  - model2b_reinhard
+  - model3_hed_jitter
+
+# Source first, then every target. Preprocessing for each arm is taken from that arm's
+# own training config, so a stain-normalised model is evaluated on stain-normalised
+# images without restating it here.
+domains:
+  - {dataset: pbc,    split: test}     # source reference point for the drop
+  - {dataset: lisc,   split: Test}     # target: different stain protocol
+  - {dataset: raabin, split: TestA}    # target: different lab, same microscope as Raabin Train
+  - {dataset: raabin, split: Test-B}   # target: second microscope AND camera; 2 of 5 classes,
+                                       # reported as a two-class evaluation (class_mapping.yaml)
+
+calibration:
+  bins: 15            # equal-width bins over max-softmax confidence
+
+abstention:
+  # Fixed grid, identical for every domain. Picking thresholds per domain would be
+  # threshold selection on target data, which CLAUDE.md section 3 forbids.
+  thresholds: [0.0, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
